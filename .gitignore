@@ -9,6 +9,7 @@
 /trangle/nohup.out
 /trangle/__pycache__/
 /compare_stcrdb.ipynb
+/old/
 # Ignore temporary files
 *.tmp
 *.log
