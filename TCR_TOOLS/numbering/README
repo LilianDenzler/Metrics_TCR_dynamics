@@ -1,0 +1,21 @@
+Uses the new anarci package
+features:
+- if multiple TCRs in the pdb file, split them into seperate files, leave unpaired if chains too far away
+  - this outputs a pdb with _1, _2 etc. appended to the filename
+  - if there is only single tcr, skip this step
+    - if only one TCR per file always consider paired
+- do imgt numbering to the input file
+  - output file exactly as is, but imgt numbered (if multiple tcrs, rename chains A,B, C, D etc.)
+  - output file with only one imgt numbered TCR if there are multiple TCRs
+  - output file with only the variable domains of one imgt numbered TCR (if multiple TCRs, do one per file)
+- output CDR and FR sequences
+- option to output pdb of only the cdrs/FRs
+
+
+need to install
+pip install anarcii
+conda install conda-forge::pymol-open-source
+#for legacy anarci
+conda install bioconda::anarci
+#MIXR for VDJ segment analysis
+conda install -c milaboratories mixcr

@@ -1,0 +1,17 @@
+# Ignore visualization outputs
+/test/
+/outputs_dig_vanilla/
+/imgt_variable/
+/examples/outputs/
+/output_trangle/
+/trangle.egg-info/
+/20250626_0335226_summary.tsv
+/trangle/nohup.out
+/trangle/__pycache__/
+/compare_stcrdb.ipynb
+# Ignore temporary files
+*.tmp
+*.log
+*__pycache__/
+# Ignore any vis folders across the repo
+*/vis/
