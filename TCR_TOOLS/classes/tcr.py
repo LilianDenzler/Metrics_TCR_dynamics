@@ -27,6 +27,8 @@ from TCR_TOOLS.__init__ import CDR_FR_RANGES, VARIABLE_RANGE
 # --- numbering/pairing/alignment (your existing modules) ---
 from TCR_TOOLS.numbering.main import fix_duplicate_resseqs_by_insertion_code,apply_imgt_renumbering
 from TCR_TOOLS.numbering.tcr_pairing import pair_tcrs_by_interface
+
+from TCR_TOOLS.geometry.calc_geometry_MD import run as calc_traj_angles
 # -------------------------------------------------------------------
 # Trajectory view (thin helper over mdtraj)
 # -------------------------------------------------------------------
@@ -66,6 +68,7 @@ class TrajectoryView:
         cdr_fr_ranges: Dict[str, Tuple[int, int]],
         variable_range: Tuple[int, int],
         atom_names: Optional[Set[str]] = None,
+        pass_names=False
     ) -> List[int]:
         # Build interval map per chain in traj
         intervals_by_chain: Dict[str, List[Tuple[int, int]]] = {}
@@ -81,6 +84,7 @@ class TrajectoryView:
             intervals_by_chain.setdefault(cid, []).append((start, end))
 
         atom_idxs: List[int] = []
+        atom_list=[]
         for atom in self._top.atoms:
             res = atom.residue
             if res is None or res.chain is None:
@@ -95,12 +99,16 @@ class TrajectoryView:
             for (s, e) in intervals_by_chain[chain_id]:
                 if s <= resnum <= e:
                     if atom_names is None or atom.name in atom_names:
+                        print(f"Selecting atom: chain={chain_id} resnum={resnum} name={atom.name}")
                         atom_idxs.append(atom.index)
-                        print(f"Matched atom: chain={chain_id} res={resnum} name={atom.name}")
+                        atom_list.append((chain_id, resnum, atom.name))
                     break
         if atom_idxs == []:
             raise ValueError(f"No atoms matched regions={region_names} (atom_names={atom_names}).")
-        return atom_idxs
+        if pass_names:
+            return atom_idxs, atom_list
+        else:
+            return atom_idxs
 
     def domain_idx(
         self,
@@ -108,12 +116,13 @@ class TrajectoryView:
         atom_names: Optional[Set[str]] = None,
         cdr_fr_ranges: Optional[Dict[str, Tuple[int, int]]] = None,
         variable_range: Optional[Tuple[int, int]] = None,
+        pass_names: bool = False
     ) -> List[int]:
         if cdr_fr_ranges is None:
             cdr_fr_ranges = CDR_FR_RANGES
         if variable_range is None:
             variable_range = VARIABLE_RANGE
-        return self._region_atom_indices(region_names, cdr_fr_ranges, variable_range, atom_names)
+        return self._region_atom_indices(region_names, cdr_fr_ranges, variable_range, atom_names, pass_names=pass_names)
 
     def domain_subset(
         self,
@@ -134,12 +143,21 @@ class TrajectoryView:
                      atom_names: Optional[Set[str]] = None,
                      inplace: bool = False):
         ref=io.mdtraj_from_biopython_path(pv_ref.full_structure)
-        ref_idx  = pv_ref.domain_idx(region_names=region_names, atom_names=atom_names)   # Bio.PDB order
-        traj_idx = self.domain_idx(region_names=region_names, atom_names=atom_names)     # MDTraj order
+        ref_idx, refnames,  = pv_ref.domain_idx(region_names=region_names, atom_names=atom_names, pass_names=True)   # Bio.PDB order
+        traj_idx, trajnames = self.domain_idx(region_names=region_names, atom_names=atom_names,pass_names=True)     # MDTraj order
 
         if len(ref_idx) != len(traj_idx):
-            raise ValueError(f"Index size mismatch: ref={len(ref_idx)} vs traj={len(traj_idx)}")
-        chains = [(c.index, getattr(c, "chain_id", None)) for c in self._top.chains]
+            shared = [x for x in refnames if x in trajnames]
+
+            # Filter TCR A to keep only shared elements
+            mask_a = [x in shared for x in refnames]
+            ref_idx = [x for x, keep in zip(ref_idx, mask_a) if keep]
+
+            # Filter TCR B to keep only shared elements
+            mask_b = [x in shared for x in trajnames]
+            traj_idx = [x for x, keep in zip(traj_idx, mask_b) if keep]
+            if len(ref_idx) != len(traj_idx):
+                raise ValueError(f"Index size mismatch: ref={len(ref_idx)} vs traj={len(traj_idx)}")
         work_traj = self._traj if inplace else self._traj[:]
         # Align in-place; get per-frame RMSD (nm)
         work_traj.superpose(
@@ -168,8 +186,6 @@ class TrajectoryView:
             new_view._traj.topology = work_traj.topology
             new_view._top = work_traj.topology
             return (new_view, rmsds_A)
-
-
 
 
 # -------------------------------------------------------------------
@@ -258,11 +274,13 @@ class TCRPairView:
         region_names: Optional[List[str]] = None,
         atom_names: Optional[Set[str]] = None,
         include_het: bool = True,
+        pass_names: bool = False
     ) -> List[int]:
         regions = region_list_for_names(region_names, VARIABLE_RANGE) if region_names else None
         pred = make_region_atom_predicate(regions, self.chain_map, atom_names, include_het)
 
         idxs: List[int] = []
+        atom_list=[]
         for i, atom in enumerate(self.full_structure.get_atoms()):
             res = atom.get_parent()
             if res is None: continue
@@ -270,10 +288,14 @@ class TCRPairView:
             if chain is None: continue
             if pred(chain.id, res, atom.get_name()):
                 idxs.append(i)
+                atom_list.append((chain.id,res.get_id()[1],atom.get_name()))
 
         if not idxs:
             raise ValueError(f"No atoms matched regions={region_names} (atom_names={atom_names}).")
-        return idxs
+        if pass_names:
+            return idxs, atom_list
+        else:
+            return idxs
 
 
     def linked_structure(self, linker_sequence: str) -> BPStructure.Structure:
@@ -325,7 +347,15 @@ class TCRPairView:
 
             return self._cached_traj_view
 
-
+    def calc_angles_traj(self):
+        #write as tmp pdb and tmp xtc
+        tmp_pdb = tempfile.NamedTemporaryFile(suffix=".pdb", delete=False)
+        tmp_xtc = tempfile.NamedTemporaryFile(suffix=".xtc", delete=False)
+        tmptop=self.traj._traj[0]
+        tmptop.save_pdb(tmp_pdb.name)
+        self.traj._traj.save_xtc(tmp_xtc.name)
+        angle_results=calc_traj_angles(tmp_xtc.name,tmp_pdb.name)
+        return angle_results
 
     # Cache control
     def invalidate_caches(self) -> None:

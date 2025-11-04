@@ -1,0 +1,2 @@
+Aligned on ['A_variable'] and atoms {'CA', 'N', 'C'}
+alignment results: mean_RMSD: 1.3998984098434448, mean_TM: 0.1637265384197235

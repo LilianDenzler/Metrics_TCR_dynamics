@@ -1,0 +1,2 @@
+Aligned on ['B_CDR2'] and atoms {'CA', 'C', 'N'}
+alignment results: mean_RMSD: 1.8531017303466797, mean_TM: 0.04826788976788521

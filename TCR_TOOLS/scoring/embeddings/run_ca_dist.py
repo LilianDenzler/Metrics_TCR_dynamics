@@ -11,8 +11,10 @@ def run(tv_gt, tv_pred, outdir, regions, max_pairs=None, reducer="pca",
         subsample=None, mantel_perms=9999, mantel_method="spearman", seed=0,temperature = 300,xbins=50,ybins = 50):
     os.makedirs(outdir, exist_ok=True)
     X_gt = features_ca_dist(tv_gt, regions, max_pairs=max_pairs, rng=seed)
-    X_pr = features_ca_dist(tv_pred, regions, max_pairs=max_pairs, rng=seed)
-
+    if tv_pred:
+        X_pr = features_ca_dist(tv_pred, regions, max_pairs=max_pairs, rng=seed)
+    else:
+        X_pr = X_gt.copy()
     if reducer in ("pca","pca_weighted","concat","gt","pred"):
         model, Zg, Zp, info = fit_pca_linear(X_gt, X_pr, n_components, fit_on=fit_on, pred_share=pred_share)
     elif reducer == "tica":
