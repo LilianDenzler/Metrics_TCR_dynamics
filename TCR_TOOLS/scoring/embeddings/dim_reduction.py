@@ -44,7 +44,11 @@ def fit_pca_linear(
     if use_gt_scaler:
         mu = X_gt.mean(axis=0)
         sd = X_gt.std(axis=0, ddof=1); sd[sd==0]=1.0
-        Xg = (X_gt - mu)/sd; Xp = (X_pred - mu)/sd
+        Xg = (X_gt - mu)/sd
+        if X_pred is not None:
+            Xp = (X_pred - mu)/sd
+        else:
+            Xp=None
     else:
         Xg, Xp = X_gt, X_pred
 
@@ -68,12 +72,20 @@ def fit_pca_linear(
     elif fit_on == "pred": model = PCA(n_components=n_components).fit(Xp)
     elif fit_on == "concat": model = PCA(n_components=n_components).fit(np.vstack([Xg, Xp]))
     else: raise ValueError("fit_on must be gt|pred|concat|concat_weighted")
+    if Xp is None:
+        Zg= model.transform(Xg)
+        Zp=None
+        info["evr_fit"]  = getattr(model, "explained_variance_ratio_", None)
+        info["evr_gt"]   = evr_on_dataset_linear(model, Xg)
+        info["evr_pred"] = None
+        return model, Zg, Zp, info
+    else:
 
-    Zg, Zp = model.transform(Xg), model.transform(Xp)
-    info["evr_fit"]  = getattr(model, "explained_variance_ratio_", None)
-    info["evr_gt"]   = evr_on_dataset_linear(model, Xg)
-    info["evr_pred"] = evr_on_dataset_linear(model, Xp)
-    return model, Zg, Zp, info
+        Zg, Zp = model.transform(Xg), model.transform(Xp)
+        info["evr_fit"]  = getattr(model, "explained_variance_ratio_", None)
+        info["evr_gt"]   = evr_on_dataset_linear(model, Xg)
+        info["evr_pred"] = evr_on_dataset_linear(model, Xp)
+        return model, Zg, Zp, info
 
 def median_gamma(X: np.ndarray, subsample=4000, seed=0) -> float:
     from sklearn.metrics import pairwise_distances
@@ -86,10 +98,13 @@ def median_gamma(X: np.ndarray, subsample=4000, seed=0) -> float:
     return 1.0 / (2.0 * (med**2) + 1e-12)
 
 def fit_kpca(
-    X_gt, X_pred, n_components=2, kernel="rbf", gamma=None, degree=3
+    X_gt, X_pred, n_components=2, kernel="rbf", gamma=None, degree=3, fit_on="gt"
 ) -> Tuple[Any, np.ndarray, np.ndarray, Dict[str, Any]]:
     if kernel == "rbf" and gamma is None:
-        gamma = median_gamma(np.vstack([X_gt, X_pred]))
+        if X_pred is None:
+            gamma = median_gamma(X_gt)
+        else:
+            gamma = median_gamma(np.vstack([X_gt, X_pred]))
     if kernel == "poly" and degree is None:
         degree = 3.0  # default poly degree
 
@@ -101,8 +116,18 @@ def fit_kpca(
         degree=float(degree) if kernel == "poly" else 3.0,
         fit_inverse_transform=False
     )
-    Zg = model.fit_transform(X_gt)
-    Zp = model.transform(X_pred)
+    if fit_on == "gt":
+        model.fit(X_gt)
+    elif fit_on == "pred":
+        model.fit(X_pred)
+    elif fit_on == "concat":
+        model.fit(np.vstack([X_gt, X_pred]))
+
+    Zg = model.transform(X_gt)
+    if X_pred is None:
+        Zp = None
+    else:
+        Zp = model.transform(X_pred)
     info = {}
     if hasattr(model, "lambdas_"):
         lam = np.asarray(model.lambdas_)
@@ -155,12 +180,16 @@ def fit_tica(
 
     # Transform
     Zg = tica.transform(X_gt)
-    Zp = tica.transform(X_pred)
+    if X_pred is None:
+        Zp = None
+    else:
+        Zp = tica.transform(X_pred)
 
     if Zg.ndim == 2 and Zg.shape[1] > n_components:
         Zg = Zg[:, :n_components]
-    if Zp.ndim == 2 and Zp.shape[1] > n_components:
-        Zp = Zp[:, :n_components]
+    if Zp is not None:
+        if Zp.ndim == 2 and Zp.shape[1] > n_components:
+            Zp = Zp[:, :n_components]
 
     # --- 4) diagnostics: values and timescales ---
     # Prefer provided attributes; fall back to safe computations
@@ -257,12 +286,19 @@ class DiffusionMaps:
 
 def fit_diffmap(
     X_gt: np.ndarray, X_pred: np.ndarray,
-    n_components=2, epsilon=None, seed=0
+    n_components=2, epsilon=None, seed=0, fit_on="gt"
 ) -> Tuple[Any, np.ndarray, np.ndarray, Dict[str, Any]]:
-    Xfit = np.vstack([X_gt, X_pred])
+    if fit_on == "gt":
+        Xfit = X_gt
+    elif fit_on == "pred":
+        Xfit = X_pred
+    elif fit_on == "concat":
+        Xfit = np.vstack([X_gt, X_pred])
     dm = DiffusionMaps(n_components=n_components, epsilon=epsilon).fit(Xfit, seed=seed)
-    Zfit = dm.transform(Xfit)              # coords for all
-    n_g = len(X_gt)
-    Zg, Zp = Zfit[:n_g], Zfit[n_g:]
+    Zg= dm.transform(X_gt)
+    if X_pred is None:
+        Zp=None
+    else:
+        Zp = dm.transform(X_pred)
     info = {"diffmap_evals": dm.evals_.tolist(), "epsilon": float(dm._eps_)}
     return dm, Zg, Zp, info

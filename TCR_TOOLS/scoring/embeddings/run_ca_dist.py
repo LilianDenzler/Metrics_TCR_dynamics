@@ -11,10 +11,10 @@ def run(tv_gt, tv_pred, outdir, regions, max_pairs=None, reducer="pca",
         subsample=None, mantel_perms=9999, mantel_method="spearman", seed=0,temperature = 300,xbins=50,ybins = 50):
     os.makedirs(outdir, exist_ok=True)
     X_gt = features_ca_dist(tv_gt, regions, max_pairs=max_pairs, rng=seed)
-    if tv_pred:
-        X_pr = features_ca_dist(tv_pred, regions, max_pairs=max_pairs, rng=seed)
+    if tv_pred==None:
+        X_pr=None
     else:
-        X_pr = X_gt.copy()
+        X_pr = features_ca_dist(tv_pred, regions, max_pairs=max_pairs, rng=seed)
     if reducer in ("pca","pca_weighted","concat","gt","pred"):
         model, Zg, Zp, info = fit_pca_linear(X_gt, X_pr, n_components, fit_on=fit_on, pred_share=pred_share)
     elif reducer == "tica":
@@ -24,14 +24,13 @@ def run(tv_gt, tv_pred, outdir, regions, max_pairs=None, reducer="pca",
         n_components=n_components,
         lag=lag)
     elif reducer == "diffmap":
-        model, Zg, Zp, info = fit_diffmap(X_gt, X_pr, n_components=n_components, epsilon=None, seed=seed)
+        model, Zg, Zp, info = fit_diffmap(X_gt, X_pr, n_components=n_components, epsilon=None, seed=seed, fit_on=fit_on)
     else:
         kernel = reducer.split("_",1)[1]
-        model, Zg, Zp, info = fit_kpca(X_gt, X_pr, n_components, kernel=kernel)
-    plot_pca(Zg, Zp,  None,None,f"{outdir}/pca_projection.png")
-    oriol_analysis(xbins, ybins,Zg, Zp, temperature, name="",outfolder=outdir)
+        print("Using kernel:",kernel)
+        model, Zg, Zp, info = fit_kpca(X_gt, X_pr, n_components, kernel=kernel, fit_on=fit_on)
     tw = {"gt": trustworthiness(X_gt, Zg, trust_k, subsample, seed),
-          "pred": trustworthiness(X_pr, Zp, trust_k, subsample, seed)}
+          "pred": trustworthiness(X_pr, Zp, trust_k, subsample, seed) if X_pr is not None else None}
     mantel = mantel_rmsd_vs_embedding(tv_gt, tv_pred, Zg, Zp, regions,
                                       atom_names={"CA"}, method=mantel_method,
                                       permutations=mantel_perms, seed=seed,

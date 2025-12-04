@@ -13,7 +13,7 @@ import pandas as pd
 from TCR_TOOLS.scoring.PCA_methods import pca_project_two as pca_project
 
 from dig_output_handler.process_output import process_output
-from pipelines.asses_model_ouput import run_one_TCR
+from TCR_Metrics.pipelines.metrics_for_models.asses_model_output import run_one_TCR
 import os
 from pathlib import Path
 

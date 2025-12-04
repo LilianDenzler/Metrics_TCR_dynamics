@@ -11,6 +11,7 @@ from TCR_TOOLS.core import io
 
 
 def run(mov, ref, regions=None, atoms=None):
+
     ref_chains = sorted({getattr(c, "chain_id", str(i)) for i, c in enumerate(ref.topology.chains)})
     if set(ref_chains) >= {"A","B"}:
         ref_chain_map = {"alpha":"A","beta":"B"}
@@ -23,6 +24,7 @@ def run(mov, ref, regions=None, atoms=None):
     elif set(mov_chains) >= {"G","D"}:
         mov_chain_map = {"alpha":"G","beta":"D"}
     # Build common selections
+
     keys_ref = _keys_for_selection(ref.topology, ref_chain_map, regions, atom_names=atoms)
     keys_mov = _keys_for_selection(mov.topology, mov_chain_map, regions, atom_names=atoms)
     print(f"REF selected atoms: {keys_ref}")
@@ -39,12 +41,19 @@ def run(mov, ref, regions=None, atoms=None):
     # RMSD (Å)
     # md.rmsd expects both have same atom count for atom_indices/ref_atom_indices; ref has only 1 frame
     # We just compare each MOV frame to REF frame-0 on the selection
-    rmsd_nm = md.rmsd(mov.mdtraj, ref, atom_indices=idx_mov, ref_atom_indices=idx_ref)
+    try:
+        rmsd_nm = md.rmsd(mov.mdtraj, ref, atom_indices=idx_mov, ref_atom_indices=idx_ref)
+    except:
+        rmsd_nm = md.rmsd(mov, ref, atom_indices=idx_mov, ref_atom_indices=idx_ref)
+
     rmsd_A = rmsd_nm * 10.0
 
     # TM-score per frame
     # compute distances between mapped pairs (Å)
-    P = mov.mdtraj.xyz[:, idx_mov, :]      # nm
+    try:
+        P = mov.mdtraj.xyz[:, idx_mov, :]      # nm
+    except:
+        P = mov.xyz[:, idx_mov, :]
     Q0 = ref.xyz[0, idx_ref, :]     # nm
     dist_A = np.linalg.norm(P - Q0, axis=2) * 10.0  # (n, k) Å
     tm = _tm_per_frame(dist_A, L=k)  # (n,)

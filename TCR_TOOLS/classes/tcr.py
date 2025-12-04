@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Dict, Tuple, List, Optional, Set, Callable
-
+from io import StringIO
 import os
 import tempfile
 import numpy as np
@@ -16,7 +16,7 @@ from Bio.PDB import (
     Residue as BPResidue,
     Atom as BPAtom,
 )
-
+from Bio.SeqUtils import seq1
 # --- project imports (pure utilities & constants) ---
 from TCR_TOOLS.core import ops, io
 import tempfile, os
@@ -29,6 +29,8 @@ from TCR_TOOLS.numbering.main import fix_duplicate_resseqs_by_insertion_code,app
 from TCR_TOOLS.numbering.tcr_pairing import pair_tcrs_by_interface
 
 from TCR_TOOLS.geometry.calc_geometry_MD import run as calc_traj_angles
+from TCR_TOOLS.geometry.calc_geometry import run as calc_angles_single_pdb
+from TCR_TOOLS.geometry.change_geometry import  run as change_angles_single_pdb
 # -------------------------------------------------------------------
 # Trajectory view (thin helper over mdtraj)
 # -------------------------------------------------------------------
@@ -99,7 +101,6 @@ class TrajectoryView:
             for (s, e) in intervals_by_chain[chain_id]:
                 if s <= resnum <= e:
                     if atom_names is None or atom.name in atom_names:
-                        print(f"Selecting atom: chain={chain_id} resnum={resnum} name={atom.name}")
                         atom_idxs.append(atom.index)
                         atom_list.append((chain_id, resnum, atom.name))
                     break
@@ -188,6 +189,9 @@ class TrajectoryView:
             return (new_view, rmsds_A)
 
 
+
+
+
 # -------------------------------------------------------------------
 # Small helper: rename two chains (pure OR inplace variant)
 # -------------------------------------------------------------------
@@ -268,6 +272,13 @@ class TCRPairView:
         )
         return ops.copy_subset(self.full_structure, pred)
 
+    def extract_sequence_from_structure(self,structure: BPStructure.Structure) -> str:
+        """Return concatenated one-letter AA sequence of the structure (all chains, in order)."""
+        seq = []
+        for res in structure.get_residues():
+
+            seq.append(seq1(res.resname))
+        return "".join(seq)
 
     def domain_idx(
         self,
@@ -315,7 +326,24 @@ class TCRPairView:
             linked_structure = parser.get_structure("linked", linked_struct_path)
             linked_structure=linked_structure[0]  # get first model
         self._linked_structure =linked_structure
+        self._linked_structure.linker_sequence=linker_sequence
+        #input(self.cdr_fr_sequences())
+        full_linked_sequence=self.extract_sequence_from_structure(self._linked_structure)
+        self._linked_structure.full_linked_sequence=full_linked_sequence
         return self._linked_structure
+
+    def linked_resmask(self, regions):
+        if self._linked_structure is None:
+            raise ValueError("Linked structure not yet built; call linked_structure() first.")
+        non_linked_imgt_mask_dict=self.cdr_fr_resmask(region_names=regions, structure_used=self.variable_structure ,atom_names={"CA"}, include_het=True)
+        linker_Nones=[False]*len(self._linked_structure.linker_sequence)
+        try:
+            full_linked_mask=non_linked_imgt_mask_dict["A"]+linker_Nones+non_linked_imgt_mask_dict["B"]
+        except:
+            full_linked_mask=non_linked_imgt_mask_dict["G"]+linker_Nones+non_linked_imgt_mask_dict["D"]
+        #check
+        assert len(full_linked_mask)==len(self._linked_structure.full_linked_sequence)
+        return full_linked_mask
 
     def cdr_fr_sequences(self) -> Dict[str, str]:
         """
@@ -333,7 +361,40 @@ class TCRPairView:
             d = ops.get_sequence_dict(subset)  # {chain_id: seq}
             cid = self.chain_map["alpha"] if rname.startswith("A_") else self.chain_map["beta"]
             seqs[rname] = d.get(cid, "")
+        #full_seqs
+        d = ops.get_sequence_dict(subset)
         return seqs
+
+
+    def cdr_fr_resmask(self,
+        structure_used,
+        region_names: Optional[List[str]] = None,
+        atom_names: Optional[Set[str]] = "CA",
+        include_het: bool = True):
+        """
+        Return sequences for all CDR/FR regions from this pair view.
+        """
+        regions = region_list_for_names(region_names)
+        pred = make_region_atom_predicate(regions, self.chain_map, atom_names, include_het)
+
+        mask_dict={}
+        #get chain ids
+        structure_used.get_chains()
+        for chain in structure_used.get_chains():
+            mask_dict[chain.id]=[]
+        for i, atom in enumerate(structure_used.get_atoms()):
+            res = atom.get_parent()
+            if res is None: continue
+            chain = res.get_parent()
+            if chain is None: continue
+            if atom.get_name() not in atom_names:
+                continue
+            elif pred(chain.id, res, atom.get_name()):
+                mask_dict[chain.id].append(True)
+            else:
+                mask_dict[chain.id].append(False)
+        return mask_dict
+
 
 
     @property
@@ -357,6 +418,22 @@ class TCRPairView:
         angle_results=calc_traj_angles(tmp_xtc.name,tmp_pdb.name)
         return angle_results
 
+
+    def calc_angles(self, out_path):
+        #write as tmp pdb
+        tmp_pdb = tempfile.NamedTemporaryFile(suffix=".pdb", delete=False)
+        io.write_pdb(tmp_pdb.name, self.full_structure)
+        angle_results=calc_angles_single_pdb(tmp_pdb.name, out_path=out_path)
+        return angle_results
+
+    def change_angles(self, out_path, BA, BC1, BC2, AC1, AC2, dc):
+        #write as tmp pdb
+        tmp_pdb = tempfile.NamedTemporaryFile(suffix=".pdb", delete=False)
+        io.write_pdb(tmp_pdb.name, self.full_structure)
+        final_aligned_pdb=change_angles_single_pdb(tmp_pdb.name,out_path, BA, BC1, BC2, AC1, AC2, dc)
+        return final_aligned_pdb
+
+
     # Cache control
     def invalidate_caches(self) -> None:
         self._variable_structure = None
@@ -368,8 +445,7 @@ class TCRPairView:
         traj_path: str,
         region_names: Optional[List[str]] = None,   # None = all residues
         atom_names: Optional[Set[str]] = None,      # e.g. {"CA","C","N"} or add "O"
-        include_het: bool = True,
-    ) -> None:
+        include_het: bool = True) -> None:
         regions = region_list_for_names(region_names, VARIABLE_RANGE) if region_names else None
         pred = make_region_atom_predicate(regions, self.chain_map, atom_names, include_het)
 
@@ -391,6 +467,7 @@ class TCRPairView:
             except Exception: pass
             raise
 
+
 # -------------------------------------------------------------------
 # TCR root object (owns original/imgt structures and per-pair views)
 # -------------------------------------------------------------------
@@ -401,11 +478,13 @@ class TCR:
     contact_cutoff: float = 5.0
     min_contacts: int = 50
     legacy_anarci: bool = True
+    scheme: str = "imgt"
 
     original_structure: BPStructure.Structure = field(init=False)
     imgt_all_structure: BPStructure.Structure = field(init=False)
     germline_info: Dict[str, str] = field(init=False, default_factory=dict)
     pairs: List[TCRPairView] = field(init=False, default_factory=list)
+    manual_chain_types: Dict[str, str] = field(default_factory=dict)  # optional manual chain type overrides
 
     # mdtraj state
     _traj: Optional[md.Trajectory] = field(init=False, default=None, repr=False)
@@ -433,12 +512,40 @@ class TCR:
         #write to temp pdb
         self.input_pdb=tmp_fix.name
         # 2) pair & get numbering maps
-        pairs, per_chain_map, germline_info = pair_tcrs_by_interface(
+        pairs, per_chain_map, germline_info,chain_types_dict = pair_tcrs_by_interface(
             self.input_pdb,
             contact_cutoff=self.contact_cutoff,
             min_contacts=self.min_contacts,
             legacy_anarci=self.legacy_anarci,
+            manual_chain_types=self.manual_chain_types,
+            scheme=self.scheme
         )
+        self.per_chain_map = per_chain_map
+        if self.manual_chain_types:
+            self.chain_types_dict = self.manual_chain_types
+        else:
+            self.chain_types_dict=chain_types_dict
+        try:
+            chain_map_A=self.per_chain_map[self.chain_types_dict.get("A","G")]
+            chain_map_B=self.per_chain_map[self.chain_types_dict.get("B","D")]
+            inv_map_A = {newval: (k,res) for k, (newval, res) in chain_map_A.items()}
+            inv_map_B = {newval: (k,res) for k, (newval, res) in chain_map_B.items()}
+            old_CDR_FR_RANGES={}
+            for name, range in CDR_FR_RANGES.items():
+                print(f"{name}: {range}")
+                if "A" in name:
+                    use_map=inv_map_A
+                if "B" in name:
+                    use_map=inv_map_B
+
+                start, end = range
+                #get key with start somewhere in value
+                old_start=use_map[(start, ' ')]
+                old_end=use_map[(end, ' ')]
+                old_CDR_FR_RANGES[name]=(old_start, old_end)
+            self.original_CDR_FR_RANGES=old_CDR_FR_RANGES
+        except:
+            self.original_CDR_FR_RANGES=None
 
         # 3) IMGT-renumber full structure (no chain renaming here)
         self.imgt_all_structure = parser.get_structure("imgt_all", self.input_pdb)
@@ -447,6 +554,7 @@ class TCR:
 
         # 4) build per-pair views (renamed A/B or G/D in each view only)
         self.pairs = []
+
         for idx, pair in enumerate(pairs, start=1):
             s = parser.get_structure(f"pair{idx}", self.input_pdb)
             apply_imgt_renumbering(s, per_chain_map)

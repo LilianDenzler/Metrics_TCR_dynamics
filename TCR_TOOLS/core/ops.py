@@ -82,3 +82,4 @@ def get_sequence_dict(structure: BPStructure.Structure) -> Dict[str, str]:
             except Exception: seq.append("X")
         out[chain.id] = "".join(seq)
     return out
+

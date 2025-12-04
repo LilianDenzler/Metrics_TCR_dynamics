@@ -1,18 +1,25 @@
-# Ignore visualization outputs
-/test/
+# --- General Output Directories ---
 /outputs_dig_vanilla/
-/imgt_variable/
-/examples/outputs/
 /output_trangle/
-/trangle.egg-info/
-/20250626_0335226_summary.tsv
-/trangle/nohup.out
-/trangle/__pycache__/
-/compare_stcrdb.ipynb
-/old/
-# Ignore temporary files
+/examples/outputs/
+outputs/
+outputs/**
+# --- Temporary/Compiled Files ---
 *.tmp
 *.log
 *__pycache__/
-# Ignore any vis folders across the repo
+
+# --- Python Build/Metadata ---
+/trangle.egg-info/
+/trangle/nohup.out
+/trangle/__pycache__/
+/compare_stcrdb.ipynb
+
+# --- Repository Specific Files ---
+*/test/
+/imgt_variable/
+/old/
+/20250626_0335226_summary.tsv
+
+# --- Generic Visualization Folders (Redundant if 'outputs/' is covered, but safe) ---
 */vis/

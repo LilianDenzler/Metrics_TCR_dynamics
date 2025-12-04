@@ -216,13 +216,13 @@ def mapping(chain, numbering, query_start, query_end):
     return numbering_map
 
 
-def legacy_anarci_number_chain(chain):
+def legacy_anarci_number_chain(chain, scheme="imgt"):
     chain_id=chain.id
     standardised_seq=[three_to_one_standardized(res.get_resname()) for res in chain]
     seq_one = "".join(standardised_seq)
     print(seq_one)
     print(f"[info] Numbering chain {chain.id} with length {len(seq_one)}")
-    results = anarci([("seq",seq_one)], scheme="imgt", output=False, assign_germline=True)
+    results = anarci([("seq",seq_one)], scheme=scheme, output=False, assign_germline=True)
     # Unpack the results. We get three lists
     numbering, alignment_details, hit_tables = results
     if numbering[0] is None:
@@ -248,7 +248,8 @@ def legacy_anarci_number_chain(chain):
 # ------------------------------
 # legacy anarci numbering
 def legacy_anarci_number_pdb(
-    pdb_path: str
+    pdb_path: str,
+    scheme="imgt"
 ) -> Dict[str, Dict[str, object]]:
     """
     Number all AA chains in a PDB.
@@ -269,7 +270,7 @@ def legacy_anarci_number_pdb(
     model0 = next(structure.get_models())
     results: Dict[str, Dict[str, object]] = {}
     for chain in model0:
-        chain_result=legacy_anarci_number_chain(chain)
+        chain_result=legacy_anarci_number_chain(chain, scheme=scheme)
         if chain_result is None:
             print(f"[warning] Chain {chain.id} could not be numbered with legacy anarci")
             #ctype, numbering_map=anarcii_number_chain(chain)

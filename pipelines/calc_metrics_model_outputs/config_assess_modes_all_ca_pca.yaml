@@ -1,0 +1,37 @@
+A_CDR1:
+  A_CDR1: ca_pca
+  A_variable: ca_pca
+  B_variable: ca_pca
+A_CDR1A_CDR2A_CDR3:
+  A_variable: ca_pca
+  B_variable: ca_pca
+A_CDR1A_CDR2A_CDR3B_CDR1B_CDR2B_CDR3:
+  A_variable: ca_pca
+  B_variable: ca_pca
+A_CDR2:
+  A_CDR2: ca_pca
+  A_variable: ca_pca
+  B_variable: ca_pca
+A_CDR3:
+  A_CDR3: ca_pca
+  A_variable: ca_pca
+  B_variable: ca_pca
+A_variable:
+  A_variable: ca_pca
+B_CDR1:
+  A_variable: ca_pca
+  B_CDR1: ca_pca
+  B_variable: ca_pca
+B_CDR1B_CDR2B_CDR3:
+  A_variable: ca_pca
+  B_variable: ca_pca
+B_CDR2:
+  A_variable: ca_pca
+  B_CDR2: ca_pca
+  B_variable: ca_pca
+B_CDR3:
+  A_variable: ca_pca
+  B_CDR3: ca_pca
+  B_variable: ca_pca
+B_variable:
+  B_variable: ca_pca

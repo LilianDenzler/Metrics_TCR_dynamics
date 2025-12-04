@@ -14,6 +14,45 @@ warnings.filterwarnings("ignore", ".*is discontinuous.*")
 
 from pathlib import Path
 
+def verify_built_geometry(A_C, A_V1, A_V2, B_C, B_V1, B_V2, BA, BC1, BC2, AC1, AC2, dc):
+    # 3) Plug into your calc-style geometry to see if you recover the same values
+    from math import degrees
+
+    def as_unit(v):
+        v = np.asarray(v, float)
+        n = np.linalg.norm(v)
+        return v / n if n > 0 else v
+
+    def angle_between(v1, v2):
+        v1 = as_unit(v1); v2 = as_unit(v2)
+        return degrees(np.arccos(np.clip(np.dot(v1, v2), -1.0, 1.0)))
+
+    A1 = as_unit(A_V1 - A_C)
+    A2 = as_unit(A_V2 - A_C)
+    B1 = as_unit(B_V1 - B_C)
+    B2 = as_unit(B_V2 - B_C)
+    Cvec = as_unit(B_C - A_C)
+
+    nx = np.cross(A1, Cvec)
+    ny = np.cross(Cvec, nx)
+    Lp = as_unit([0.0, np.dot(A1, nx), np.dot(A1, ny)])
+    Hp = as_unit([0.0, np.dot(B1, nx), np.dot(B1, ny)])
+    BA_calc = angle_between(Lp, Hp)
+    if np.cross(Lp, Hp)[0] < 0:
+        BA_calc = -BA_calc
+
+    BC1_calc = angle_between(B1, -Cvec)
+    AC1_calc = angle_between(A1,  Cvec)
+    BC2_calc = angle_between(B2, -Cvec)
+    AC2_calc = angle_between(A2,  Cvec)
+    dc_calc  = np.linalg.norm(B_C - A_C)
+
+    print("BA   target / calc:", BA,  BA_calc)
+    print("BC1  target / calc:", BC1, BC1_calc)
+    print("AC1  target / calc:", AC1, AC1_calc)
+    print("BC2  target / calc:", BC2, BC2_calc)
+    print("AC2  target / calc:", AC2, AC2_calc)
+    print("dc   target / calc:", dc,  dc_calc)
 
 def write_renumbered_fv(out_folder, in_path):
     """
@@ -32,65 +71,124 @@ def write_renumbered_fv(out_folder, in_path):
 # ========================
 # Geometry and Math Helpers
 # ========================
+def normalize(v, length=1.0):
+    v = np.asarray(v, float)
+    n = np.linalg.norm(v)
+    if n == 0:
+        return v
+    return (v / n) * length
 
-def normalize(v):
-    """Normalizes a vector to unit length."""
-    norm = np.linalg.norm(v)
-    return v / norm if norm > 0 else v
 
 def build_geometry_from_angles(BA, BC1, BC2, AC1, AC2, dc):
     """
-    Constructs a 3D coordinate system for two domains (A and B)
-    based on 6 geometric parameters.
+    Construct a canonical TCR geometry that is EXACTLY consistent with the
+    calc script's definitions of:
+
+       BA, BC1, BC2, AC1, AC2, dc
+
+    The construction matches the calc code:
+
+      Cvec = unit(B_C - A_C)
+      A1   = unit(A_V1 - A_C)
+      B1   = unit(B_V1 - B_C)
+      ...
+      BA   = signed angle between projected A1/B1 in the A-defined frame.
+
+    We fix a convenient global frame:
+
+      - A centroid at (0, 0, 0)
+      - B centroid at (dc, 0, 0)   → Cvec = +x
+      - A1 lies in the x–y plane
+      - B1 is rotated around +x so that the resulting BA matches the target.
+
+    A2/B2 are chosen to satisfy AC2/BC2 and avoid degeneracies, but do not
+    affect BA by construction (only their angles to Cvec matter in the calc).
     """
-    # Convert degrees to radians
-    ba_rad, bc1_rad, bc2_rad = np.radians([BA, BC1, BC2])
-    ac1_rad, ac2_rad = np.radians([AC1, AC2])
 
-    # --- Define coordinates in a local frame for Domain B ---
-    B_C = np.array([0.0, 0.0, 0.0])
-    B_V1_dir = np.array([np.cos(bc1_rad), np.sin(bc1_rad), 0.0])
+    # Convert to radians
+    ba   = np.deg2rad(BA)
+    bc1  = np.deg2rad(BC1)
+    bc2  = np.deg2rad(BC2)
+    ac1  = np.deg2rad(AC1)
+    ac2  = np.deg2rad(AC2)
 
-    b2_x = np.cos(bc2_rad)
-    b2_y = -(b2_x * np.cos(bc1_rad)) / np.sin(bc1_rad)
-    b2_z_sq = 1 - b2_x**2 - b2_y**2
-    if b2_z_sq < -1e-6: raise ValueError("BC1/BC2 angles are not geometrically compatible.")
-    B_V2_dir = normalize(np.array([b2_x, b2_y, np.sqrt(max(0, b2_z_sq))]))
+    # --- Centroids ---
+    A_C = np.array([0.0, 0.0, 0.0])
+    B_C = np.array([dc, 0.0, 0.0])
+    # Cvec = B_C - A_C = (dc,0,0) → unit (1,0,0)
 
-    # --- Define coordinates for Domain A ---
-    A_C = np.array([dc, 0.0, 0.0])
-    A_V1_dir = np.array([
-        -np.cos(ac1_rad),
-        np.sin(ac1_rad) * np.cos(ba_rad),
-        np.sin(ac1_rad) * np.sin(ba_rad)
+    # =========================
+    # 1) PC1_A direction (A1)
+    # =========================
+    # Constrain angle(A1, +x) = AC1 → put A1 in x–y plane
+    # so that the calc code's AC1 = angle(A1, Cvec) is satisfied.
+    A1_dir = np.array([
+        np.cos(ac1),
+        np.sin(ac1),
+        0.0,
     ])
+    A1_dir = normalize(A1_dir)
 
-    a2_x = -np.cos(ac2_rad)
-    c1 = -A_V1_dir[0] * a2_x
-    r_sq = 1.0 - a2_x**2
-    y1, z1 = A_V1_dir[1], A_V1_dir[2]
+    # =========================
+    # 2) PC1_B direction (B1)
+    # =========================
+    # We need:
+    #   BC1 = angle(B1, -Cvec)  and
+    #   BA  = torsion defined in the calc script.
+    #
+    # For Cvec = +x, angle(B1, -x) = BC1  ⇒  polar angle θ_B1 = π - BC1
+    # Now parameterise rotation around +x by an azimuth α in the (y,z) plane.
+    # One can show algebraically that in the calc script's BA definition,
+    # the resulting BA equals exactly α. So we set α = BA (radians).
+    theta_B1 = np.pi - bc1
+    sin_t1   = np.sin(theta_B1)
 
-    # Handle the case where y1 is close to zero to avoid division errors
-    if np.isclose(y1, 0):
-        if np.isclose(z1, 0): raise ValueError("A_V1_dir cannot be parallel to the center axis.")
-        a2_z = c1 / z1
-        rad_y_sq = r_sq - a2_z**2
-        if rad_y_sq < -1e-6: raise ValueError("AC1/AC2 angles are not geometrically compatible.")
-        a2_y = np.sqrt(max(0, rad_y_sq))
-    else:
-        qa = z1**2 + y1**2
-        qb = -2 * c1 * z1
-        qc = c1**2 - r_sq * y1**2
-        rad_quad = qb**2 - 4 * qa * qc
-        if rad_quad < -1e-6: raise ValueError("AC1/AC2 angles are not geometrically compatible.")
+    # Azimuth around +x chosen to match BA
+    alpha = ba
 
-        a2_z = (-qb + np.sqrt(max(0, rad_quad))) / (2 * qa)
-        a2_y = (c1 - z1 * a2_z) / y1
+    B1_dir = np.array([
+        np.cos(theta_B1),
+        sin_t1 * np.cos(alpha),
+        sin_t1 * np.sin(alpha),
+    ])
+    B1_dir = normalize(B1_dir)
 
-    A_V2_dir = normalize(np.array([a2_x, a2_y, a2_z]))
+    # =========================
+    # 3) PC2_A direction (A2)
+    # =========================
+    # AC2 = angle(A2, +x). There is free azimuth; we choose a plane that
+    # is generically not collinear with A1. Putting A2 in the x–z plane
+    # works well and keeps the construction simple.
+    theta_A2 = ac2
+    A2_dir = np.array([
+        np.cos(theta_A2),
+        0.0,
+        np.sin(theta_A2),
+    ])
+    A2_dir = normalize(A2_dir)
 
-    return (A_C, A_C + A_V1_dir, A_C + A_V2_dir, B_C, B_C + B_V1_dir, B_C + B_V2_dir)
+    # =========================
+    # 4) PC2_B direction (B2)
+    # =========================
+    # Similarly, BC2 = angle(B2, -x) ⇒ polar θ_B2 = π - BC2. We can put B2
+    # in the x–y plane for simplicity (any azimuth works for the calc AC/BC2).
+    theta_B2 = np.pi - bc2
+    B2_dir = np.array([
+        np.cos(theta_B2),
+        np.sin(theta_B2),
+        0.0,
+    ])
+    B2_dir = normalize(B2_dir)
 
+    # =========================
+    # 5) Convert to absolute endpoints
+    # =========================
+    A_V1 = A_C + A1_dir
+    A_V2 = A_C + A2_dir
+    B_V1 = B_C + B1_dir
+    B_V2 = B_C + B2_dir
+
+    return A_C, A_V1, A_V2, B_C, B_V1, B_V2
 
 def apply_transformation(coords, R, t):
     """Applies rotation (R) and translation (t) to a set of coordinates."""
@@ -136,10 +234,13 @@ def move_chains_to_geometry(new_consensus_pdb, input_pdb, output_pdb,A_consenus_
     """
     aligned_chain_A = align_chain_to_consensus(input_pdb, new_consensus_pdb, "A", static_consenus_res=A_consenus_res, mobile_consenus_res=A_consenus_res)
     aligned_chain_B = align_chain_to_consensus(input_pdb, new_consensus_pdb, "B", static_consenus_res=B_consenus_res, mobile_consenus_res=B_consenus_res)
-
-    final_aligned_structure = aligned_chain_A + aligned_chain_B
+    #other chains in input_pdb remain unchanged
+    structure = btsio.load_structure(input_pdb, model=1)
+    other_chains = structure[(structure.chain_id != "A") & (structure.chain_id != "B")]
+    final_aligned_structure = aligned_chain_A + aligned_chain_B +other_chains
     btsio.save_structure(output_pdb, final_aligned_structure)
     print(f"Saved final aligned structure to: {output_pdb}")
+    return final_aligned_structure
 
 def align_chain_to_consensus(mobile_pdb_path, static_pdb_path, chain_id, mobile_consenus_res=None, static_consenus_res=None):
     """Helper to align a single chain and return the transformed AtomArray."""
@@ -288,10 +389,12 @@ def run(input_pdb, out_path, BA, BC1, BC2, AC1, AC2, dc, vis=True):
         vis_folder = tmp_out / "vis"; vis_folder.mkdir(exist_ok=True)
 
 
-    renumbered_pdb,renumbered_pdb_fv=write_renumbered_fv(tmp_out, input_pdb)
+    #renumbered_pdb,renumbered_pdb_fv=write_renumbered_fv(tmp_out, input_pdb)
 
     # 1. Build the target geometry from the input angles
     A_C, A_V1, A_V2, B_C, B_V1, B_V2 = build_geometry_from_angles(BA, BC1, BC2, AC1, AC2, dc)
+    verify_built_geometry(A_C, A_V1, A_V2, B_C, B_V1, B_V2, BA, BC1, BC2, AC1, AC2, dc)
+    input()
 
     # 2. Move the consensus chains to this new target geometry
     new_chain_A = change_geometry(consA_pca_path, "A", A_C, A_V1, A_V2)
@@ -319,7 +422,7 @@ def run(input_pdb, out_path, BA, BC1, BC2, AC1, AC2, dc, vis=True):
 
     # 4. Align the input TCR chains to the new consensus geometry
     final_aligned_pdb = str(tmp_out / f"{pdb_name}_oriented.pdb")
-    move_chains_to_geometry(new_consensus_pdb, renumbered_pdb_fv, final_aligned_pdb, A_consenus_res, B_consenus_res)
+    final_aligned_structure=move_chains_to_geometry(new_consensus_pdb, input_pdb, final_aligned_pdb, A_consenus_res, B_consenus_res)
 
     # 5. Generate visualization script
     if vis:
@@ -331,31 +434,15 @@ def run(input_pdb, out_path, BA, BC1, BC2, AC1, AC2, dc, vis=True):
         print(f"\n✅ PyMOL script saved. Run with:\n   pymol -cq {vis_script}")
         os.system(f"pymol -cq {vis_script}")
         print(f"Output files saved in: {tmp_out}")
+    #align final_aligned_structure alocha chain to original alpha chain
+    final_aligned_pdb_ogorientation=str(tmp_out / f"{pdb_name}_oriented_ogorientation.pdb")
+    original_structure = btsio.load_structure(input_pdb, model=1)
+    original_alpha = original_structure[original_structure.chain_id == "A"]
+    final_alpha = final_aligned_structure[final_aligned_structure.chain_id == "A"]
+    _, transform, _, _ = bts.superimpose_structural_homologs(fixed=original_alpha, mobile=final_alpha)
+    M = np.asarray(transform.as_matrix(), dtype=np.float64)[0]
+    R, t = M[:3, :3], M[:3, 3]
+    final_aligned_structure.coord = (final_aligned_structure.coord @ R.T) + t
+    btsio.save_structure(final_aligned_pdb_ogorientation, final_aligned_structure)
+
     return final_aligned_pdb
-
-
-def main():
-    import argparse
-    parser = argparse.ArgumentParser(description="Reorient a TCR structure based on 6 geometric parameters.")
-    parser.add_argument('--input_pdb', type=str, required=True, help='Path to input PDB file.')
-    parser.add_argument('--out_path', type=str, required=True, help='Output directory for results.')
-    parser.add_argument('--BA', type=float, required=True, help='Torsion angle between PC1_A and PC1_B.')
-    parser.add_argument('--BC1', type=float, required=True, help='Bend angle between PC1_B and center axis.')
-    parser.add_argument('--BC2', type=float, required=True, help='Bend angle between PC2_B and center axis.')
-    parser.add_argument('--AC1', type=float, required=True, help='Bend angle between PC1_A and center axis.')
-    parser.add_argument('--AC2', type=float, required=True, help='Bend angle between PC2_A and center axis.')
-    parser.add_argument('--dc', type=float, required=True, help='Distance between centroids.')
-    parser.add_argument("--vis", action="store_true", help="PyMOL visualization.")
-
-    args = parser.parse_args()
-    vis_val= True if args.vis else False
-    run(
-        input_pdb=args.input_pdb,
-        out_path=args.out_path,
-        BA=args.BA, BC1=args.BC1, BC2=args.BC2,
-        AC1=args.AC1, AC2=args.AC2, dc=args.dc,
-        vis=vis_val
-    )
-
-if __name__ == "__main__":
-    main()

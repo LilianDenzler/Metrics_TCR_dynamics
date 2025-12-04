@@ -1,5 +1,7 @@
 import os
 import math
+import shutil
+import tempfile
 import warnings
 from pathlib import Path
 from collections import namedtuple
@@ -347,62 +349,57 @@ cmd.quit()
 # -------------------------
 # Public API (similar to your previous run() signature)
 # -------------------------
-def run(input_pdb, out_path, vis=True):
-
+def run(input_pdb_fv, out_path=None, vis=True, cleanup_tmp=True):
     consA_pca_path = os.path.join(DATA_PATH, "chain_A/average_structure_with_pca.pdb")
     consB_pca_path = os.path.join(DATA_PATH, "chain_B/average_structure_with_pca.pdb")
-     #read file with consensus alignment residues as list of integers
+
+    # read file with consensus alignment residues as list of integers
     with open(os.path.join(DATA_PATH, "chain_A/consensus_alignment_residues.txt"), "r") as f:
         content = f.read().strip()
     A_consenus_res = [int(x) for x in content.split(",") if x.strip()]
+
     with open(os.path.join(DATA_PATH, "chain_B/consensus_alignment_residues.txt"), "r") as f:
         content = f.read().strip()
     B_consenus_res = [int(x) for x in content.split(",") if x.strip()]
 
-    pdb_name = Path(input_pdb).stem
-    out_dir = Path(out_path); out_dir.mkdir(exist_ok=True)
-    tmp_out = out_dir / pdb_name; tmp_out.mkdir(exist_ok=True)
-    vis_folder = tmp_out / "vis"
+    # ----------------- output directory logic -----------------
+    if out_path is None:
+        # make a tmp folder for output
+        out_dir = Path(tempfile.mkdtemp(prefix="tcr_geometry_"))
+        is_tmp = True
+    else:
+        out_dir = Path(out_path)
+        out_dir.mkdir(exist_ok=True, parents=True)
+        is_tmp = False
+
+    # vis subfolder (only if requested)
+    vis_folder = None
     if vis:
+        vis_folder = out_dir / "vis"
         vis_folder.mkdir(exist_ok=True)
 
-
-    out_path, fv_input=write_renumbered_fv(tmp_out, input_pdb)
-
-    # Process (align + compute angles + visualize)
+    # ----------------- main processing -----------------
     result = process(
-        input_pdb=fv_input,
+        input_pdb=input_pdb_fv,
         consA_with_pca=consA_pca_path,
         consB_with_pca=consB_pca_path,
-        out_dir=str(tmp_out),
+        out_dir=str(out_dir),
         vis_folder=str(vis_folder) if vis else None,
         A_consenus_res=A_consenus_res,
-        B_consenus_res=B_consenus_res
+        B_consenus_res=B_consenus_res,
     )
 
-    # Save CSV
+    # Save CSV row
     df = pd.DataFrame([result])[["pdb_name", "BA", "BC1", "AC1", "BC2", "AC2", "dc"]]
-    df.to_csv(tmp_out / "angles_results.csv", index=False)
-    print(f"📄 Saved: {tmp_out/'angles_results.csv'}")
+
     if vis:
-        print(f"🖼️  Figures/PSE in: {vis_folder}")
+        print(f"🖼️  Figures/PSE written under: {vis_folder}")
+
+    # ----------------- optional cleanup of tmp dir -----------------
+    # Only delete if:
+    #  - we created a temporary dir (out_path is None)
+    #  - and caller allows cleanup
+    if is_tmp and cleanup_tmp:
+        shutil.rmtree(out_dir, ignore_errors=True)
+
     return df
-
-# -------------------------
-# Example / CLI
-# -------------------------
-def main():
-    # CLI
-    import argparse
-    parser = argparse.ArgumentParser(description="Calculate TCR geometry from pseudoatom-defined axes (no geometry modification).")
-    parser.add_argument("--input_pdb", type=str, help="Path to input PDB.")
-    parser.add_argument("--out_path", type=str, required=True)
-    parser.add_argument("--vis", action="store_true", help="PyMOL visualization.")
-    args = parser.parse_args()
-    vis_val= True if args.vis else False
-    if args.input_pdb:
-        run(args.input_pdb, args.out_path, vis=vis_val)
-
-
-if __name__ == "__main__":
-    main()

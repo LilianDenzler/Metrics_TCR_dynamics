@@ -14,7 +14,10 @@ def run(tv_gt, tv_pred, outdir, regions, atoms=("CA","C","N","O"),
         mantel_perms=9999, mantel_method="spearman", seed=0, lag=5,temperature = 300,xbins=50,ybins = 50):
     os.makedirs(outdir, exist_ok=True)
     X_gt = TVWrap(tv_gt).coords(regions, atoms)
-    X_pr = TVWrap(tv_pred).coords(regions, atoms)
+    if tv_pred==None:
+        X_pr=None
+    else:
+        X_pr = TVWrap(tv_pred).coords(regions, atoms)
 
 
     if reducer in ("pca","pca_weighted","concat","gt","pred"):
@@ -27,14 +30,12 @@ def run(tv_gt, tv_pred, outdir, regions, atoms=("CA","C","N","O"),
         n_components=n_components,
         lag=lag)
     elif reducer == "diffmap":
-        model, Zg, Zp, info = fit_diffmap(X_gt, X_pr, n_components=n_components, epsilon=None, seed=seed)
+        model, Zg, Zp, info = fit_diffmap(X_gt, X_pr, n_components=n_components, epsilon=None, seed=seed, fit_on=fit_on)
     else:
         kernel = reducer.split("_",1)[1]   # kpca_rbf/kpca_cosine/kpca_poly
-        model, Zg, Zp, info = fit_kpca(X_gt, X_pr, n_components, kernel=kernel)
-    plot_pca(Zg, Zp,  None,None,f"{outdir}/pca_projection.png")
-    oriol_analysis(xbins, ybins,Zg, Zp, temperature, name="",outfolder=outdir)
+        model, Zg, Zp, info = fit_kpca(X_gt, X_pr, n_components, kernel=kernel, fit_on=fit_on)
     tw = {"gt": trustworthiness(X_gt, Zg, trust_k, subsample, seed),
-          "pred": trustworthiness(X_pr, Zp, trust_k, subsample, seed)}
+          "pred": trustworthiness(X_pr, Zp, trust_k, subsample, seed)if X_pr is not None else None}
     mantel = mantel_rmsd_vs_embedding(tv_gt, tv_pred, Zg, Zp, regions,
                                       atom_names=set(atoms), method=mantel_method,
                                       permutations=mantel_perms, seed=seed,

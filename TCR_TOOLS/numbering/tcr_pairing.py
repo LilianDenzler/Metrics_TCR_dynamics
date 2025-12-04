@@ -147,7 +147,9 @@ def pair_tcrs_by_interface(pdb_path: str,
                            contact_cutoff: float = 5.0,
                            min_contacts: int = 50,
                            centroid_tiebreaker: bool = True,
-                           legacy_anarci: bool = False
+                           legacy_anarci: bool = False,
+                           manual_chain_types: Optional[Dict[str, str]] = None,
+                           scheme="imgt" #only for legacy version
                            ) -> List[Tuple[str, str, Dict[str, float]]]:
     """
 
@@ -174,13 +176,16 @@ def pair_tcrs_by_interface(pdb_path: str,
 
     # 1) Number chains with Anarcii and get mappings
     if legacy_anarci:
-        results=legacy_anarci_number_pdb(pdb_path)
+        results=legacy_anarci_number_pdb(pdb_path, scheme=scheme)
         germline_info={cid: r.get("germlines") for cid, r in results.items()}
 
     else:
-        results = anarcii_number_pdb(pdb_path)
+        results = anarcii_number_pdb(pdb_path, scheme=scheme)
         germline_info=None
     per_chain_map={cid: r["mapping"] for cid, r in results.items()}
+    chain_types_dict = {r["ctype"]: cid for cid, r in results.items()}
+    if manual_chain_types:
+        chain_types_dict=manual_chain_types
     alpha_ids = [cid for cid, r in results.items() if r["ctype"] in ["A","G"]]
     beta_ids  = [cid for cid, r in results.items() if r["ctype"] in ["B","D"]]
     if len(alpha_ids) == 1 and len(beta_ids) == 1:
@@ -189,6 +194,21 @@ def pair_tcrs_by_interface(pdb_path: str,
     elif not alpha_ids or not beta_ids:
         matches=[]
         print("No TCR pairs found.")
+        if legacy_anarci:
+            print("Using ANARCII numbering.")
+            results = anarcii_number_pdb(pdb_path)
+            germline_info=None
+        else:
+            print("Using legacy ANARCI numbering.")
+            results=legacy_anarci_number_pdb(pdb_path)
+            germline_info={cid: r.get("germlines") for cid, r in results.items()}
+        if len(alpha_ids) == 1 and len(beta_ids) == 1:
+            matches=[(alpha_ids[0], beta_ids[0], None)]
+        elif not alpha_ids or not beta_ids:
+            return [], per_chain_map, germline_info,chain_types_dict
+        else:
+            matches=structure_matching_pairs(results, model0, alpha_ids, beta_ids, contact_cutoff=contact_cutoff, min_contacts=min_contacts)
+
     else:
         matches=structure_matching_pairs(results, model0, alpha_ids, beta_ids, contact_cutoff=contact_cutoff, min_contacts=min_contacts)
     unpaired=set(alpha_ids + beta_ids) - set([x for p in matches for x in p[:2]])
@@ -223,8 +243,8 @@ def pair_tcrs_by_interface(pdb_path: str,
             }
         match_info.append((unpaired_dict))
     if germline_info:
-        return match_info, per_chain_map, germline_info
-    return match_info, per_chain_map, None
+        return match_info, per_chain_map, germline_info,chain_types_dict
+    return match_info, per_chain_map, None,chain_types_dict
 
 
 

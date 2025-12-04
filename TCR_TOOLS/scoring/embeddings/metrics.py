@@ -45,34 +45,92 @@ def rmsd_matrix(traj: md.Trajectory, atom_indices: np.ndarray) -> np.ndarray:
     return 0.5*(M+M.T)
 
 def mantel_rmsd_vs_embedding(
-    tv_gt, tv_pred, Z_gt, Z_pred, region_names, atom_names={"CA"},
-    method="spearman", permutations=9999, seed=0,
-    subsample_gt: Optional[int]=None, subsample_pred: Optional[int]=None
-) -> Dict[str, Dict[str,float]]:
-    idx_gt = np.asarray(tv_gt.domain_idx(region_names=region_names, atom_names=atom_names), int)
-    idx_pr = np.asarray(tv_pred.domain_idx(region_names=region_names, atom_names=atom_names), int)
-    if len(idx_gt) != len(idx_pr):
-        raise ValueError("Atom selection mismatch for RMSD Mantel.")
+    tv_gt,
+    tv_pred,
+    Z_gt: np.ndarray,
+    Z_pred: Optional[np.ndarray],
+    region_names,
+    atom_names={"CA"},
+    method: str = "spearman",
+    permutations: int = 9999,
+    seed: int = 0,
+    subsample_gt: Optional[int] = None,
+    subsample_pred: Optional[int] = None,
+) -> Dict[str, Dict[str, float]]:
+    """
+    Mantel correlations between RMSD matrices and embedding distances.
+
+    Supports:
+      - GT-only: pass tv_pred=None and/or Z_pred=None → returns {"gt": {...}}
+      - GT+Pred: as before → returns {"gt": {...}, "pred": {...}, "combined": {...}}
+    """
     rs = np.random.default_rng(seed)
+
+    # --- GT selection and subsampling ---
+    idx_gt = np.asarray(tv_gt.domain_idx(region_names=region_names,
+                                         atom_names=atom_names), int)
     Tgt = tv_gt.mdtraj
-    Tpr = tv_pred.mdtraj
-    Igt = np.arange(Tgt.n_frames) if not subsample_gt else np.sort(rs.choice(Tgt.n_frames, subsample_gt, replace=False))
-    Ipr = np.arange(Tpr.n_frames) if not subsample_pred else np.sort(rs.choice(Tpr.n_frames, subsample_pred, replace=False))
-    Tgt = Tgt[Igt]; Tpr = Tpr[Ipr]; Zg = Z_gt[Igt]; Zp = Z_pred[Ipr]
 
+    if subsample_gt is None:
+        Igt = np.arange(Tgt.n_frames)
+    else:
+        Igt = np.sort(rs.choice(Tgt.n_frames, subsample_gt, replace=False))
+
+    Tgt = Tgt[Igt]
+    Zg = Z_gt[Igt]
+
+    # RMSD distances in structure space (GT)
     Dg = rmsd_matrix(Tgt, idx_gt)
-    Dp = rmsd_matrix(Tpr, idx_pr)
-    C  = np.empty((Tpr.n_frames, Tgt.n_frames), float)
-    for i in range(Tgt.n_frames):
-        C[:, i] = md.rmsd(Tpr, Tgt, frame=i, atom_indices=idx_pr, ref_atom_indices=idx_gt) * 10.0
-    Dall = np.block([[Dg, C.T],[C, Dp]])
+    # Distances in embedding space (GT)
+    Eg = squareform(pdist(Zg))
 
-    Eg   = squareform(pdist(Zg))
+    # Mantel GT
+    rg, pg = mantel(Dg, Eg, method, permutations, seed)
+    out: Dict[str, Dict[str, float]] = {"gt": {"r": rg, "p": pg}}
+
+    # --- If no pred provided, stop here ---
+    has_pred = (tv_pred is not None) and (Z_pred is not None)
+    if not has_pred:
+        return out
+
+    # --- Pred selection and subsampling ---
+    idx_pr = np.asarray(tv_pred.domain_idx(region_names=region_names,
+                                           atom_names=atom_names), int)
+    if len(idx_gt) != len(idx_pr):
+        raise ValueError("Atom selection mismatch for RMSD Mantel (GT vs Pred).")
+
+    Tpr = tv_pred.mdtraj
+    if subsample_pred is None:
+        Ipr = np.arange(Tpr.n_frames)
+    else:
+        Ipr = np.sort(rs.choice(Tpr.n_frames, subsample_pred, replace=False))
+
+    Tpr = Tpr[Ipr]
+    Zp = Z_pred[Ipr]
+
+    # RMSD distances in structure space (Pred)
+    Dp = rmsd_matrix(Tpr, idx_pr)
+
+    # Cross RMSD between GT and Pred
+    C = np.empty((Tpr.n_frames, Tgt.n_frames), float)
+    for i in range(Tgt.n_frames):
+        # md.rmsd uses angstrom; multiply by 10.0 if you want nm→Å or vice versa
+        C[:, i] = md.rmsd(Tpr, Tgt, frame=i,
+                          atom_indices=idx_pr,
+                          ref_atom_indices=idx_gt) * 10.0
+
+    # Combined structural-distance matrix
+    Dall = np.block([[Dg, C.T],
+                     [C,  Dp]])
+
+    # Embedding distances (Pred + combined)
     Ep   = squareform(pdist(Zp))
     Ec12 = cdist(Zp, Zg)
-    Eall = np.block([[Eg, Ec12.T],[Ec12, Ep]])
+    Eall = np.block([[Eg,   Ec12.T],
+                     [Ec12, Ep]])
 
-    rg, pg = mantel(Dg, Eg, method, permutations, seed)
+    # Mantel Pred + combined
     rp, pp = mantel(Dp, Ep, method, permutations, seed)
     ra, pa = mantel(Dall, Eall, method, permutations, seed)
+
     return {"gt":{"r":rg,"p":pg},"pred":{"r":rp,"p":pp},"combined":{"r":ra,"p":pa}}

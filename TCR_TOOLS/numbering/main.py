@@ -201,6 +201,10 @@ def apply_imgt_renumbering(
         cid = chain.id
         cmap = per_chain_map.get(cid, {})
         if cmap=={}:
+            #reverse offset
+            for enum,residue in enumerate(chain):
+                hetflag, resseq, icode = residue.id
+                residue.id = (hetflag, resseq - 1000, icode)
             print(cid, "not a tcr chain")
             continue
         for enum,residue in enumerate(chain):
