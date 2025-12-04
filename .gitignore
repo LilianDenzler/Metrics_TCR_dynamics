@@ -4,6 +4,7 @@
 /examples/outputs/
 outputs/
 outputs/**
+test/
 # --- Temporary/Compiled Files ---
 *.tmp
 *.log
