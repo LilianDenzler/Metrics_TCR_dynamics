@@ -1,4 +1,0 @@
-index,name,is_reference,align_rmsd_on_align_sel,score_rmsd_on_score_sel,score_tm_on_score_sel,aligned_pdb
-0,1j8h,True,3.744435952672785e-15,5.466633913037199e-15,1.0,test_aligners/aligned_pdbs/1j8h_aligned.pdb
-1,1fyt,False,0.3294282904791958,0.3036006710200799,0.9877378819370873,test_aligners/aligned_pdbs/1fyt_aligned.pdb
-2,1g6r,False,1.7712374723056594,1.6524220007139434,0.8075891170276094,test_aligners/aligned_pdbs/1g6r_aligned.pdb
