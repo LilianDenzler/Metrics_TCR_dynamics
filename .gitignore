@@ -10,7 +10,9 @@ test/**
 *.tmp
 *.log
 *__pycache__/
-
+.gitignore
+*.pyc
+env.sh
 # --- Python Build/Metadata ---
 /trangle.egg-info/
 /trangle/nohup.out
