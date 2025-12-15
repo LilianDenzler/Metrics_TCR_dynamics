@@ -8,7 +8,25 @@ def load_pdb(path: str, struct_id: str = "structure") -> BPStructure.Structure:
     return PDBParser(QUIET=True).get_structure(struct_id, path)
 
 def write_pdb(path: str, structure: BPStructure.Structure) -> None:
-    io = PDBIO(); io.set_structure(structure); io.save(path)
+    """
+    Write a PDB file with guaranteed numeric occupancy and B-factor
+    for all ATOM/HETATM records, so that Biotite can parse it.
+
+    - If occupancy is None, set it to 1.0
+    - If B-factor is None, set it to 0.0
+    """
+    # Fix missing occupancies / B-factors in-place
+    for atom in structure.get_atoms():
+        if atom.get_occupancy() is None:
+            atom.set_occupancy(1.0)
+            #warning: Biotite cannot handle None occupancy
+        if atom.get_bfactor() is None:
+            atom.set_bfactor(0.0)
+            #warning: Biotite cannot handle None B-factor
+
+    io = PDBIO()
+    io.set_structure(structure)
+    io.save(path)
 
 def structure_to_atomarray(structure: BPStructure.Structure) -> bts.AtomArray:
     model0 = next(structure.get_models())

@@ -34,6 +34,18 @@ def as_unit(v):
     n = np.linalg.norm(v)
     return v / n if n > 0 else v
 
+def signed_angle(v, ref, normal):
+    """
+    Returns signed angle between v and ref, using `normal` to define orientation.
+    """
+    v = as_unit(v)
+    ref = as_unit(ref)
+    ang = math.degrees(math.acos(np.clip(np.dot(v, ref), -1.0, 1.0)))
+    # sign comes from orientation relative to the normal
+    sign = np.sign(np.dot(np.cross(ref, v), normal))
+    return ang * sign
+
+
 def angle_between(v1, v2):
     v1 = as_unit(v1); v2 = as_unit(v2)
     return math.degrees(math.acos(np.clip(np.dot(v1, v2), -1.0, 1.0)))
@@ -43,37 +55,91 @@ def angle_between(v1, v2):
 # Expectation: they live as residues named 'CEN','PC1','PC2' on chain 'Z'
 # (This matches your change-geometry script behavior.)
 # -------------------------
-def read_pseudo_points(pdb_path, chain_id_main):
+def read_pseudo_points(s, chain_id_main):
     """
-    Returns Points for the given chain from a consensus PDB that contains
+    Returns Points for the given chain from a structure that contains
     pseudoatoms on chain 'Z' with residue names: CEN, PC1, PC2.
-    The main protein chain_id_main is used only to sanity-check presence;
-    pseudoatoms are read from chain Z.
+
+    Supports:
+      - Biopython Structure
+      - Biotite AtomArray
+
+    `chain_id_main` is used only for a sanity check
+    (does the main TCR chain exist?).
     """
-    parser = PDBParser(QUIET=True)
-    s = parser.get_structure("consensus", pdb_path)
 
-    # Sanity: ensure the main chain exists
-    if chain_id_main not in [ch.id for ch in s[0]]:
-        raise ValueError(f"Chain '{chain_id_main}' not found in {pdb_path}")
+    # ---------- Case 1: Biopython Structure ----------
+    if hasattr(s, "get_models"):  # Biopython Structure-like
+        model0 = next(s.get_models())
+        chain_ids = [ch.id for ch in model0]
 
-    # Find pseudoatoms in chain Z
-    try:
-        z = s[0]["Z"]
-    except KeyError:
-        raise ValueError(f"Chain 'Z' with pseudoatoms (CEN/PC1/PC2) not found in {pdb_path}")
+        if chain_id_main not in chain_ids:
+            raise ValueError(f"Chain '{chain_id_main}' not found i")
 
-    def _get_first_atom(res_name):
-        for res in z:
-            if res.get_resname() == res_name:
-                for atom in res:
-                    return atom.get_coord()
-        raise ValueError(f"Pseudoatom '{res_name}' not found in chain Z of {pdb_path}")
+        try:
+            z = model0["Z"]
+        except KeyError:
+            raise ValueError(
+                f"Chain 'Z' with pseudoatoms (CEN/PC1/PC2) not found"
+            )
 
-    C  = _get_first_atom("CEN")
-    V1 = _get_first_atom("PC1")
-    V2 = _get_first_atom("PC2")
-    return Points(C=np.array(C, float), V1=np.array(V1, float), V2=np.array(V2, float))
+        def _get_first_atom(res_name):
+            for res in z:
+                if res.get_resname() == res_name:
+                    for atom in res:
+                        return atom.get_coord()
+            raise ValueError(
+                f"Pseudoatom '{res_name}' not found in chain Z "
+            )
+
+        C = _get_first_atom("CEN")
+        V1 = _get_first_atom("PC1")
+        V2 = _get_first_atom("PC2")
+
+        return Points(
+            C=np.array(C, float),
+            V1=np.array(V1, float),
+            V2=np.array(V2, float),
+        )
+
+    # ---------- Case 2: Biotite AtomArray ----------
+    if isinstance(s, bts.AtomArray) or hasattr(s, "array_length"):
+        arr = s
+
+        # sanity check main chain
+        unique_chains = np.unique(arr.chain_id)
+        if chain_id_main not in unique_chains:
+            raise ValueError(
+                f"Chain '{chain_id_main}' not found in AtomArray "
+            )
+
+        # select pseudoatoms on chain 'Z'
+        mask_Z = (arr.chain_id == "Z")
+        if not np.any(mask_Z):
+            raise ValueError(
+                f"Chain 'Z' with pseudoatoms (CEN/PC1/PC2) not found in AtomArray "
+            )
+
+        arr_Z = arr[mask_Z]
+
+        def _get_first_coord(res_name):
+            mask = (arr_Z.res_name == res_name)
+            if not np.any(mask):
+                raise ValueError(
+                    f"Pseudoatom '{res_name}' not found in chain Z of AtomArray"
+                )
+            return np.asarray(arr_Z[mask].coord[0], float)
+
+        C  = _get_first_coord("CEN")
+        V1 = _get_first_coord("PC1")
+        V2 = _get_first_coord("PC2")
+
+        return Points(C=C, V1=V1, V2=V2)
+
+    # ---------- Fallback ----------
+    raise TypeError(
+        f"Unsupported structure type for read_pseudo_points(): {type(s)}"
+    )
 
 # -------------------------
 # Biotite alignment
@@ -90,20 +156,16 @@ def apply_affine_to_atomarray(atomarray, transform):
     arr.coord = new_coords.astype(np.float32)
     return arr
 
-def align_with_biotite(static_pdb_file: str, mobile_pdb_file: str, output_pdb_file: str, chain_name: str,static_consenus_res: list =None, mobile_consenus_res: list =None):
+def align_with_biotite(static, mobile, chain_name: str,static_consenus_res: list =None, mobile_consenus_res: list =None):
     """
     Align 'mobile' to 'static' using C-alpha atoms of a single protein chain.
     Saves the aligned full-atom mobile structure to output_pdb_file.
     Pseudoatoms (chain Z) ride along with the same transform if present.
     """
-    static_structure = btsio.load_structure(static_pdb_file, model=1)
-    mobile_structure = btsio.load_structure(mobile_pdb_file, model=1)
-
-    static_mask = (static_structure.atom_name == "CA") & (static_structure.chain_id == chain_name)
-    mobile_mask = (mobile_structure.atom_name == "CA") & (mobile_structure.chain_id == chain_name)
-
-    static_ca = static_structure[static_mask]
-    mobile_ca = mobile_structure[mobile_mask]
+    static_mask = (static.atom_name == "CA") & (static.chain_id == chain_name)
+    mobile_mask = (mobile.atom_name == "CA") & (mobile.chain_id == chain_name)
+    static_ca = static[static_mask]
+    mobile_ca = mobile[mobile_mask]
     if static_consenus_res:
         static_ca = static_ca[np.isin(static_ca.res_id, static_consenus_res)]
     if mobile_consenus_res:
@@ -114,9 +176,8 @@ def align_with_biotite(static_pdb_file: str, mobile_pdb_file: str, output_pdb_fi
     _, transform, _, _ = bts.superimpose_structural_homologs(
         fixed=static_ca, mobile=mobile_ca, max_iterations=1
     )
-    mobile_full_aligned = apply_affine_to_atomarray(mobile_structure, transform)
-    btsio.save_structure(output_pdb_file, mobile_full_aligned)
-    print(f"💾 Saved aligned structure to '{output_pdb_file}'")
+    mobile_full_aligned = apply_affine_to_atomarray(mobile, transform)
+    return mobile_full_aligned
 
 # -------------------------
 # CGO arrow helper (for PyMOL script text)
@@ -138,7 +199,113 @@ def add_cgo_arrow(start, end, color, radius=0.3):
 # -------------------------
 # Core processing (NO geometry modification of the input)
 # -------------------------
-def process(input_pdb, consA_with_pca, consB_with_pca, out_dir, vis_folder=None, A_consenus_res=None, B_consenus_res=None):
+def get_tcr_points_world(
+    input_pdb: str,
+    out_dir: str,
+    alpha_chain_id: str = "A",
+    beta_chain_id: str = "B",
+    vis_folder: str = None,
+) -> tuple[Points, Points]:
+    """
+    Return Apts, Bpts as Points in the ORIGINAL complex frame.
+
+    Steps:
+      1) Align input to consensus A → aligned_input (same as TCR-only code).
+      2) Align consensus B to aligned_input → aligned_consB.
+      3) Read pseudoatoms from consensus A and aligned_consB (consensus frame).
+      4) Use Biotite to compute the transform that maps aligned_input back
+         to the original complex, and apply it to the pseudoatoms.
+    """
+    # --- consensus PDBs with PCA pseudoatoms ---
+    consA_pca_path = os.path.join(DATA_PATH, "chain_A/average_structure_with_pca.pdb")
+    consB_pca_path = os.path.join(DATA_PATH, "chain_B/average_structure_with_pca.pdb")
+
+    # --- consensus residue indices ---
+    with open(os.path.join(DATA_PATH, "chain_A/consensus_alignment_residues.txt")) as f:
+        A_consenus_res = [int(x) for x in f.read().strip().split(",") if x.strip()]
+    with open(os.path.join(DATA_PATH, "chain_B/consensus_alignment_residues.txt")) as f:
+        B_consenus_res = [int(x) for x in f.read().strip().split(",") if x.strip()]
+
+
+    # ---- 1) align input → consensus A on chain A (writes aligned_input_path) ----
+    consA_pca_structure= btsio.load_structure(consA_pca_path, model=1)
+    consB_pca_structure= btsio.load_structure(consB_pca_path, model=1)
+
+    input_structure = btsio.load_structure(input_pdb, model=1)
+
+    aligned_input_to_alpha=align_with_biotite(
+        static=consA_pca_structure,
+        mobile=input_structure,
+        chain_name="A",
+        static_consenus_res=A_consenus_res,
+        mobile_consenus_res=A_consenus_res,
+    )
+
+    # ---- 2) align consensus B → aligned_input on chain B (writes aligned_consB_path) ----
+    aligned_consB=align_with_biotite(
+        static=aligned_input_to_alpha,
+        mobile=consB_pca_structure,
+        chain_name="B",
+        static_consenus_res=B_consenus_res,
+        mobile_consenus_res=B_consenus_res,
+    )
+
+    # ---- 3) read pseudoatom points in "consensus / aligned" frame ----
+    A_cons = read_pseudo_points(consA_pca_structure,       chain_id_main="A")
+    B_cons = read_pseudo_points(aligned_consB,   chain_id_main="B")
+
+    # ---- 4) compute transform: aligned_input → original input (WORLD) ----
+    orig_alpha    = input_structure[input_structure.chain_id    == alpha_chain_id]
+    aligned_alpha = aligned_input_to_alpha[aligned_input_to_alpha.chain_id == alpha_chain_id]
+
+    # This gives a transform that moves `mobile` (aligned_alpha) onto `fixed` (orig_alpha)
+    _, transform, _, _ = bts.superimpose_structural_homologs(
+        fixed=orig_alpha,
+        mobile=aligned_alpha,
+    )
+
+    M = np.asarray(transform.as_matrix(), dtype=np.float64)
+    if M.shape == (1, 4, 4):
+        M = M[0]
+    R = M[:3, :3]
+    t = M[:3, 3]
+
+    # coords_world = coords_aligned @ R.T + t
+    def cons_to_world(p):
+        p = np.asarray(p, float)
+        return p @ R.T + t
+
+    A_world = Points(
+        C  = cons_to_world(A_cons.C),
+        V1 = cons_to_world(A_cons.V1),
+        V2 = cons_to_world(A_cons.V2),
+    )
+    B_world = Points(
+        C  = cons_to_world(B_cons.C),
+        V1 = cons_to_world(B_cons.V1),
+        V2 = cons_to_world(B_cons.V2),
+    )
+    if vis_folder is not None:
+        #transform the consB_pca_path protein structure
+        consB_aligned_tcr = apply_affine_to_atomarray(consB_pca_structure, transform)
+        consB_in_tcr_frame = os.path.join(vis_folder, "consB_aligned_for_points.pdb")
+        btsio.save_structure(consB_in_tcr_frame, consB_aligned_tcr)
+        #transform the consA_pca_path protein structure
+        consA_aligned_tcr = apply_affine_to_atomarray(consA_pca_structure, transform)
+        consA_in_tcr_frame = os.path.join(vis_folder, "consA_aligned_for_points.pdb")
+        btsio.save_structure(consA_in_tcr_frame, consA_aligned_tcr)
+        generate_pymol_script(
+            input_aligned_viz=input_pdb,
+            consA_pdb=consA_in_tcr_frame,
+            consB_pdb=consB_in_tcr_frame,
+            Apts=A_world,
+            Bpts=B_world,
+            vis_folder=vis_folder,
+        )
+
+    return A_world, B_world
+
+def calc_tcr_geo_main(input_pdb, out_dir, alpha_chain_id="A", beta_chain_id="B", vis_folder=None):
     """
     1) Renumbered input is aligned to consensus A (chain A).
     2) Consensus B is aligned to the aligned input (chain B).
@@ -146,34 +313,19 @@ def process(input_pdb, consA_with_pca, consB_with_pca, out_dir, vis_folder=None,
     4) Compute BA, BC1/2, AC1/2, dc from those points.
     5) Optionally write and run a PyMOL visualization script.
     """
-    parser = PDBParser(QUIET=True)
+    consA_with_pca = os.path.join(DATA_PATH, "chain_A/average_structure_with_pca.pdb")
+    consB_with_pca = os.path.join(DATA_PATH, "chain_B/average_structure_with_pca.pdb")
 
-    os.makedirs(out_dir, exist_ok=True)
-    aligned_input_path = os.path.join(out_dir, "aligned_input.pdb")
-    aligned_consB_path = os.path.join(out_dir, "aligned_consB.pdb")
+    # read file with consensus alignment residues as list of integers
+    with open(os.path.join(DATA_PATH, "chain_A/consensus_alignment_residues.txt"), "r") as f:
+        content = f.read().strip()
+    A_consenus_res = [int(x) for x in content.split(",") if x.strip()]
 
-    # Align input (mobile) to consensus A (static) on chain A
-    align_with_biotite(
-        static_pdb_file=consA_with_pca,
-        mobile_pdb_file=input_pdb,
-        output_pdb_file=aligned_input_path,
-        chain_name="A",
-        static_consenus_res=A_consenus_res,
-        mobile_consenus_res=A_consenus_res
-    )
-    # Align consensus B (mobile) to aligned input (static) on chain B
-    align_with_biotite(
-        static_pdb_file=aligned_input_path,
-        mobile_pdb_file=consB_with_pca,
-        output_pdb_file=aligned_consB_path,
-        chain_name="B",
-        static_consenus_res=B_consenus_res,
-        mobile_consenus_res=B_consenus_res
-    )
+    with open(os.path.join(DATA_PATH, "chain_B/consensus_alignment_residues.txt"), "r") as f:
+        content = f.read().strip()
+    B_consenus_res = [int(x) for x in content.split(",") if x.strip()]
 
-    # Read Points from pseudoatoms
-    Apts = read_pseudo_points(consA_with_pca, chain_id_main="A")
-    Bpts = read_pseudo_points(aligned_consB_path, chain_id_main="B")
+    Apts, Bpts = get_tcr_points_world(input_pdb=input_pdb,out_dir=out_dir,alpha_chain_id=alpha_chain_id,beta_chain_id=beta_chain_id, vis_folder=vis_folder)
 
     # Compute geometry
     Cvec = as_unit(Bpts.C - Apts.C)
@@ -191,43 +343,30 @@ def process(input_pdb, consA_with_pca, consB_with_pca, out_dir, vis_folder=None,
     if np.cross(Lp, Hp)[0] < 0:
         BA = -BA
 
-    BC1 = angle_between(B1, -Cvec)
-    AC1 = angle_between(A1,  Cvec)
-    BC2 = angle_between(B2, -Cvec)
-    AC2 = angle_between(A2,  Cvec)
+    # Define orientation normals for each domain
+    nA = as_unit(np.cross(A1, Cvec))
+    nB = as_unit(np.cross(B1, Cvec))
+
+    AC1 = signed_angle(A1,  Cvec, nA)
+    AC2 = signed_angle(A2,  Cvec, nA)
+    BC1 = signed_angle(B1, -Cvec, nB)
+    BC2 = signed_angle(B2, -Cvec, nB)
+
+    # Canonicalize
+    if AC1 > 0:
+        AC1 = -AC1          # AC1 always negative
+
+    # Optional canonicalization for BC2:
+    if np.dot(B2, nA) > 0:  # or any other global convention you like
+        BC2 = -BC2
+
+
     dc  = float(np.linalg.norm(Bpts.C - Apts.C))
 
-    # Visualization outputs (optional)
-    if vis_folder:
-        vis_folder = Path(vis_folder)
-        vis_folder.mkdir(exist_ok=True, parents=True)
-        io = PDBIO()
-        input_struct = parser.get_structure("input_aligned", aligned_input_path)
-        consA = parser.get_structure("consA", consA_with_pca)
-        consB = parser.get_structure("consB_aligned", aligned_consB_path)
 
-        input_aligned_viz = os.path.join(vis_folder, f"{Path(input_pdb).stem}_aligned_input.pdb")
-        consA_out_viz     = os.path.join(vis_folder, f"{Path(consA_with_pca).stem}.pdb")
-        consB_out_viz     = os.path.join(vis_folder, f"{Path(consB_with_pca).stem}_aligned.pdb")
-        io.set_structure(input_struct); io.save(input_aligned_viz)
-        io.set_structure(consA);        io.save(consA_out_viz)
-        io.set_structure(consB);        io.save(consB_out_viz)
-
-        generate_pymol_script(
-            input_aligned_viz=os.path.abspath(input_aligned_viz),
-            consA_pdb=os.path.abspath(consA_out_viz),
-            consB_pdb=os.path.abspath(consB_out_viz),
-            Apts=Apts, Bpts=Bpts,
-            vis_folder=str(vis_folder)
-        )
-        os.system(f"pymol -cq {os.path.join(str(vis_folder), 'vis.py')}")
-    else:
-        input_aligned_viz = os.path.abspath(aligned_input_path)
 
     return {
-        "pdb_name": Path(input_pdb).stem,
-        "BA": BA, "BC1": BC1, "AC1": AC1, "BC2": BC2, "AC2": AC2, "dc": dc,
-        "input_aligned": input_aligned_viz
+        "BA": BA, "BC1": BC1, "AC1": AC1, "BC2": BC2, "AC2": AC2, "dc": dc
     }
 
 # -------------------------
@@ -349,18 +488,7 @@ cmd.quit()
 # -------------------------
 # Public API (similar to your previous run() signature)
 # -------------------------
-def run(input_pdb_fv, out_path=None, vis=True, cleanup_tmp=True):
-    consA_pca_path = os.path.join(DATA_PATH, "chain_A/average_structure_with_pca.pdb")
-    consB_pca_path = os.path.join(DATA_PATH, "chain_B/average_structure_with_pca.pdb")
-
-    # read file with consensus alignment residues as list of integers
-    with open(os.path.join(DATA_PATH, "chain_A/consensus_alignment_residues.txt"), "r") as f:
-        content = f.read().strip()
-    A_consenus_res = [int(x) for x in content.split(",") if x.strip()]
-
-    with open(os.path.join(DATA_PATH, "chain_B/consensus_alignment_residues.txt"), "r") as f:
-        content = f.read().strip()
-    B_consenus_res = [int(x) for x in content.split(",") if x.strip()]
+def run(input_pdb_fv, out_path=None, vis=True, cleanup_tmp=True, alpha_chain_id="A", beta_chain_id="B"):
 
     # ----------------- output directory logic -----------------
     if out_path is None:
@@ -379,18 +507,16 @@ def run(input_pdb_fv, out_path=None, vis=True, cleanup_tmp=True):
         vis_folder.mkdir(exist_ok=True)
 
     # ----------------- main processing -----------------
-    result = process(
+    result = calc_tcr_geo_main(
         input_pdb=input_pdb_fv,
-        consA_with_pca=consA_pca_path,
-        consB_with_pca=consB_pca_path,
+        alpha_chain_id="A",
+        beta_chain_id="B",
         out_dir=str(out_dir),
         vis_folder=str(vis_folder) if vis else None,
-        A_consenus_res=A_consenus_res,
-        B_consenus_res=B_consenus_res,
     )
 
     # Save CSV row
-    df = pd.DataFrame([result])[["pdb_name", "BA", "BC1", "AC1", "BC2", "AC2", "dc"]]
+    df = pd.DataFrame([result])[["BA", "BC1", "AC1", "BC2", "AC2", "dc"]]
 
     if vis:
         print(f"🖼️  Figures/PSE written under: {vis_folder}")
@@ -402,4 +528,4 @@ def run(input_pdb_fv, out_path=None, vis=True, cleanup_tmp=True):
     if is_tmp and cleanup_tmp:
         shutil.rmtree(out_dir, ignore_errors=True)
 
-    return df
+    return result

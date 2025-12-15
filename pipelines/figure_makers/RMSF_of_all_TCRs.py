@@ -1,0 +1,1 @@
+#align all TCRs on consensus variable framework alpha and calculate average RMSF of each residue

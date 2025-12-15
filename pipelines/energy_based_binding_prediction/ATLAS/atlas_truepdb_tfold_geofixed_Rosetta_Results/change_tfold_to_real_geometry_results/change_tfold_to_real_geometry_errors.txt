@@ -1,0 +1,7 @@
+1BD2.pdb: Not enough CA atoms to align on chain A
+1FO0.pdb: Not enough CA atoms to align on chain A
+1NAM.pdb: Not enough CA atoms to align on chain A
+2OL3.pdb: Not enough CA atoms to align on chain A
+3FFC.pdb: Not enough CA atoms to align on chain A
+4G8G.pdb: Not enough CA atoms to align on chain A
+4G9F.pdb: Not enough CA atoms to align on chain A

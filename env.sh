@@ -15,3 +15,7 @@ pip install pyEMMA
 pip install seaborn
 pip install matplotlib
 pip install tabulate
+
+conda install conda-forge::openmm -y
+
+conda install conda-forge::pdbfixer -y
