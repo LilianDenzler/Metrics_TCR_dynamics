@@ -21,6 +21,7 @@ test/**
 */test/
 /imgt_variable/
 /old/
+/experiments/
 /20250626_0335226_summary.tsv
 
 # --- Generic Visualization Folders (Redundant if 'outputs/' is covered, but safe) ---
