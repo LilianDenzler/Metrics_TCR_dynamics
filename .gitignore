@@ -13,6 +13,7 @@ test/**
 .gitignore
 *.pyc
 env.sh
+example_script.py
 # --- Python Build/Metadata ---
 /trangle.egg-info/
 /trangle/nohup.out
