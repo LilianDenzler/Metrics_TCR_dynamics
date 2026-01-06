@@ -1,0 +1,4 @@
+encoding,task,n_samples,n_classes,cv_macro_f1,cv_bal_acc,cv_mcc,perm_p_macro_f1
+raw_deg,joint_separate_germline_ignore_state,580,41,0.7600237146533859,0.822513965163693,0.7558472866562603,
+raw_deg,joint_separate_state_ignore_germline,935,2,0.4657601694672659,0.4676266405341295,-0.0650017204354201,
+raw_deg,joint_separate_germline_and_state,448,38,0.5543323649684686,0.6208437761069339,0.5246453624221473,

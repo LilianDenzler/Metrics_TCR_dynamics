@@ -1,0 +1,4 @@
+encoding,task,n_samples,n_classes,cv_macro_f1,cv_bal_acc,cv_mcc,perm_p_macro_f1
+sincos,joint_separate_germline_ignore_state,580,41,0.8537289789276231,0.8885965641520951,0.8469715500373051,
+sincos,joint_separate_state_ignore_germline,935,2,0.5055288461538462,0.5070773077381008,0.014196936372759419,
+sincos,joint_separate_germline_and_state,448,38,0.571482960387831,0.6128955109218266,0.5225162360717925,

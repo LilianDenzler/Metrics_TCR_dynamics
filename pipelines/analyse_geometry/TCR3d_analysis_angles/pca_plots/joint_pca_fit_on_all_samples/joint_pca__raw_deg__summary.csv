@@ -1,0 +1,2 @@
+encoding,n_samples,n_classes,include_cdr3,pc1_var,pc2_var,features
+raw_deg,580,41,False,0.3138762042581486,0.214335277117582,"BA,BC1,AC1,BC2,AC2,dc"

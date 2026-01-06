@@ -1,0 +1,2 @@
+encoding,n_samples,n_classes,include_cdr3,pc1_var,pc2_var,features
+sincos,580,41,False,0.36494149082485955,0.22828723469759196,"BA_sin,BA_cos,BC1_sin,BC1_cos,AC1_sin,AC1_cos,BC2_sin,BC2_cos,AC2_sin,AC2_cos,dc"

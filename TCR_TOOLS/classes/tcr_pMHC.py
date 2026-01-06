@@ -71,6 +71,9 @@ class TCRpMHC:
     MHC_a_chain_id: str = "M"
     MHC_b_chain_id: str = "N"
     Peptide_chain_id: str = "P"
+    TCR_a_chain_id: Optional[str] = None
+    TCR_b_chain_id: Optional[str] = None
+
     contact_cutoff: float = 5.0
     min_contacts: int = 50
     legacy_anarci: bool = True
@@ -157,7 +160,28 @@ class TCRpMHC:
 
         self.per_chain_map = per_chain_map
         self.chain_types_dict=chain_types_dict
+
         print("IDENTIFIED TCR CHAIN TYPES: ",self.chain_types_dict)
+        if self.TCR_a_chain_id is not None and self.TCR_b_chain_id is not None:
+            print("TCR CHAIN ID OVERRIDE")
+            self.chain_types_dict={}
+            self.chain_types_dict["A"]=self.TCR_a_chain_id
+            self.chain_types_dict["B"]=self.TCR_b_chain_id
+        if "A" not in self.chain_types_dict.keys() and "G" not in self.chain_types_dict.keys() and "L" not in self.chain_types_dict.keys() and "K" not in self.chain_types_dict.keys():
+            raise ValueError("Could not identify TCR alpha chain in structure.")
+        else:
+            alpha_aliases = ("A", "G", "L","K")
+            present = [k for k in alpha_aliases if k in self.chain_types_dict]
+            old_key = present[0]
+            self.chain_types_dict["A"] = self.chain_types_dict.pop(old_key)
+        if "B" not in self.chain_types_dict.keys() and "D" not in self.chain_types_dict.keys() and "H" not in self.chain_types_dict.keys():
+            raise ValueError("Could not identify TCR beta chain in structure.")
+        else:
+            beta_aliases = ("B", "D", "H")
+            present = [k for k in beta_aliases if k in self.chain_types_dict]
+            old_key = present[0]
+            self.chain_types_dict["B"] = self.chain_types_dict.pop(old_key)
+
         try:
             chain_map_A=self.per_chain_map[self.chain_types_dict.get("A","G")]
             chain_map_B=self.per_chain_map[self.chain_types_dict.get("B","D")]
@@ -279,8 +303,9 @@ class TCRpMHC:
                     _cached_traj_view=TrajectoryView(new_traj, {"alpha": new_a, "beta":  new_b }) if self._traj else None,
                 )
             )
-
     def calc_geometry(self, out_path):
+        print(self.newTCR_a_chain_id)
+        print(self.newTCR_b_chain_id)
         df=calc_complex_angles_single_pdb(self,
                                           out_path=out_path,
                                           vis=True,

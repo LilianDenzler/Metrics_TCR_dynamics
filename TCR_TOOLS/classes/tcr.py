@@ -505,6 +505,8 @@ class TCRPairView:
         return angle_results
 
     def calc_angles_tcr(self, out_path, vis: bool = True):
+        if out_path is None:
+            out_path = tempfile.mkdtemp(prefix="tcr_calc_angles_")
         write_pdb(os.path.join(out_path, "input_tcr.pdb"), self.full_structure)
         angle_results = calc_angles_tcr_only_old(
             os.path.join(out_path, "input_tcr.pdb"),
@@ -512,8 +514,7 @@ class TCRPairView:
             vis=vis,
             cleanup_tmp=True,
             alpha_chain_id=self.chain_map["alpha"],
-            beta_chain_id=self.chain_map["beta"],
-        )
+            beta_chain_id=self.chain_map["beta"])
         return angle_results
 
     def change_angles_tcr(

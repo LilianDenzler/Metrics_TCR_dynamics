@@ -50,6 +50,180 @@ def angle_between(v1, v2):
     v1 = as_unit(v1); v2 = as_unit(v2)
     return math.degrees(math.acos(np.clip(np.dot(v1, v2), -1.0, 1.0)))
 
+def _res_sort_key(res):
+    # (hetflag, resseq, icode)
+    hetflag, resseq, icode = res.get_id()
+    icode = (icode or " ").strip()
+    # sort insertion codes after the base number deterministically
+    return (int(resseq), icode)
+
+def _get_ca_coord(res):
+    if "CA" not in res:
+        return None
+    return np.asarray(res["CA"].get_coord(), dtype=float)
+
+def _pymol_resi_string(res):
+    # PyMOL: resi "104A" works for insertion codes
+    hetflag, resseq, icode = res.get_id()
+    icode = (icode or " ").strip()
+    return f"{int(resseq)}{icode}" if icode else f"{int(resseq)}"
+
+def _collect_chain_residues(model0, chain_id: str):
+    if chain_id not in model0:
+        raise ValueError(f"Chain '{chain_id}' not found in PDB.")
+    chain = model0[chain_id]
+    residues = []
+    for res in chain:
+        hetflag, resseq, icode = res.get_id()
+        if hetflag != " ":
+            continue
+        if _get_ca_coord(res) is None:
+            continue
+        residues.append(res)
+    residues.sort(key=_res_sort_key)
+    return residues
+
+def _pick_res_by_resseq(residues, resseq: int):
+    """
+    If multiple residues match same resseq (insertion codes), prefer blank-icode,
+    else choose the first in sorted order.
+    """
+    matches = [r for r in residues if int(r.get_id()[1]) == int(resseq)]
+    if not matches:
+        return None
+    # prefer blank insertion code
+    for r in matches:
+        icode = (r.get_id()[2] or " ").strip()
+        if icode == "":
+            return r
+    return matches[0]
+# -------------------------
+# Compute CD3 bend metric
+# -------------------------
+
+def compute_cdr3_bend_metric_from_anchors(
+    input_pdb: str,
+    chain_id: str,
+    chain_centroid: np.ndarray,
+    anchor_pre_resseq: int = 104,
+    anchor_post_resseq: int = 118,
+    eps_perp: float = 1e-3,   # Å threshold for stable perpendicular vectors
+):
+    parser = PDBParser(QUIET=True)
+    model0 = parser.get_structure("tcr", input_pdb)[0]
+
+    residues = _collect_chain_residues(model0, chain_id)
+    if len(residues) < 10:
+        raise ValueError(f"Too few residues with CA in chain {chain_id}.")
+
+    pre = _pick_res_by_resseq(residues, anchor_pre_resseq)
+    post = _pick_res_by_resseq(residues, anchor_post_resseq)
+    if pre is None or post is None:
+        raise ValueError(
+            f"Could not find anchor residues in chain {chain_id}: "
+            f"pre={anchor_pre_resseq}, post={anchor_post_resseq}."
+        )
+
+    i_pre = residues.index(pre)
+    i_post = residues.index(post)
+    if i_post <= i_pre + 1:
+        raise ValueError(
+            f"Anchors are not ordered correctly or no residues between them for chain {chain_id}: "
+            f"pre_idx={i_pre}, post_idx={i_post}."
+        )
+
+    cdr3_residues = residues[i_pre + 1 : i_post]
+    if len(cdr3_residues) < 3:
+        raise ValueError(f"Too few residues between anchors for chain {chain_id} (n={len(cdr3_residues)}).")
+
+    A = _get_ca_coord(pre)
+    B = _get_ca_coord(post)
+    if A is None or B is None:
+        raise ValueError(f"Missing CA on anchor residues for chain {chain_id}.")
+
+    # Deterministic axis direction: pre -> post
+    u = B - A
+    uhat = as_unit(u)
+
+    M = 0.5 * (A + B)
+
+    # Reference vector: midpoint -> chain centroid projected ⟂ u
+    C = np.asarray(chain_centroid, float)
+    v = C - M
+    v_perp = v - np.dot(v, uhat) * uhat
+    v_perp_norm = float(np.linalg.norm(v_perp))
+
+    # Candidate CDR coords
+    cdr_coords = [(r, _get_ca_coord(r)) for r in cdr3_residues]
+    cdr_coords = [(r, c) for r, c in cdr_coords if c is not None]
+    if not cdr_coords:
+        raise ValueError(f"No CA coords in CDR3 interval for chain {chain_id}.")
+
+    def _apex_score(coord: np.ndarray) -> float:
+        dA = float(np.linalg.norm(coord - A))
+        dB = float(np.linalg.norm(coord - B))
+        return min(dA, dB)
+
+    def _height_from_chord(coord: np.ndarray) -> float:
+        w = coord - M
+        w_perp = w - np.dot(w, uhat) * uhat
+        return float(np.linalg.norm(w_perp))
+
+    # Deterministic apex selection with tie-breaks
+    # 1) maximize min(dA, dB)
+    # 2) tie-break: maximize height from chord
+    # 3) tie-break: choose the residue closest to the middle of the interval
+    mid_index = (len(cdr3_residues) - 1) / 2.0
+    res_to_idx = {r: i for i, r in enumerate(cdr3_residues)}
+
+    def _key(rc):
+        r, coord = rc
+        score = _apex_score(coord)
+        height = _height_from_chord(coord)
+        idx = res_to_idx.get(r, 0)
+        centrality = -abs(idx - mid_index)  # closer to middle => larger
+        return (score, height, centrality)
+
+    r_apex, R = max(cdr_coords, key=_key)
+
+    # Apex vector projected ⟂ u
+    w = R - M
+    w_perp = w - np.dot(w, uhat) * uhat
+    w_perp_norm = float(np.linalg.norm(w_perp))
+
+    # Always compute magnitude (stable discriminant)
+    # If either perpendicular is degenerate, magnitude is still definable if w_perp exists.
+    bend_abs_deg = float(angle_between(v_perp if v_perp_norm > 0 else w_perp, w_perp))
+
+    sign_reliable = (v_perp_norm >= eps_perp) and (w_perp_norm >= eps_perp)
+
+    if sign_reliable:
+        vhat = as_unit(v_perp)
+        what = as_unit(w_perp)
+        bend_signed_deg = float(signed_angle(what, vhat, uhat))
+    else:
+        # No stable sign; keep signed as NaN and rely on bend_abs_deg.
+        bend_signed_deg = float("nan")
+    bend_signed_deg=((bend_signed_deg -180.0) % 360.0)
+    return {
+        "chain_id": chain_id,
+        "anchor_pre_resi": _pymol_resi_string(pre),
+        "anchor_post_resi": _pymol_resi_string(post),
+        "apex_resi": _pymol_resi_string(r_apex),
+        "A_anchor": A,
+        "B_anchor": B,
+        "M_mid": M,
+        "C_chain": C,
+        "R_apex": R,
+        "bend_abs_deg": bend_abs_deg,
+        "bend_signed_deg": bend_signed_deg,
+        "sign_reliable": bool(sign_reliable),
+        "apex_height_A": _height_from_chord(R),
+        "centroid_height_A": v_perp_norm,
+        "apex_score_minDist": _apex_score(R),
+    }
+
+
 # -------------------------
 # Read pseudoatoms (CEN/PC1/PC2) from PDB
 # Expectation: they live as residues named 'CEN','PC1','PC2' on chain 'Z'
@@ -156,6 +330,44 @@ def apply_affine_to_atomarray(atomarray, transform):
     arr.coord = new_coords.astype(np.float32)
     return arr
 
+def align_with_biotite_strict(
+    static, mobile, chain_name: str,
+    static_consenus_res: list = None,
+    mobile_consenus_res: list = None,
+):
+    # CA only
+    s = static[(static.atom_name == "CA") & (static.chain_id == chain_name)]
+    m = mobile[(mobile.atom_name == "CA") & (mobile.chain_id == chain_name)]
+
+    # Optional restrict by provided lists
+    if static_consenus_res is not None:
+        s = s[np.isin(s.res_id.astype(int), np.asarray(static_consenus_res, int))]
+    if mobile_consenus_res is not None:
+        m = m[np.isin(m.res_id.astype(int), np.asarray(mobile_consenus_res, int))]
+
+    # Enforce SAME residue IDs on both sides
+    common = np.intersect1d(s.res_id.astype(int), m.res_id.astype(int))
+    if common.size < 8:
+        raise ValueError(f"Too few common CA residues for chain {chain_name}: {common.size}")
+
+    s = s[np.isin(s.res_id.astype(int), common)]
+    m = m[np.isin(m.res_id.astype(int), common)]
+
+    # Sort both by residue id to force 1:1 ordering
+    s = s[np.argsort(s.res_id.astype(int))]
+    m = m[np.argsort(m.res_id.astype(int))]
+
+    # Now superimpose using the *already matched* arrays
+    _, transform, _, _ = bts.superimpose_structural_homologs(
+        fixed=s,
+        mobile=m,
+        max_iterations=1,
+    )
+
+    mobile_full_aligned = apply_affine_to_atomarray(mobile, transform)
+    return mobile_full_aligned
+
+
 def align_with_biotite(static, mobile, chain_name: str,static_consenus_res: list =None, mobile_consenus_res: list =None):
     """
     Align 'mobile' to 'static' using C-alpha atoms of a single protein chain.
@@ -176,8 +388,43 @@ def align_with_biotite(static, mobile, chain_name: str,static_consenus_res: list
     _, transform, _, _ = bts.superimpose_structural_homologs(
         fixed=static_ca, mobile=mobile_ca, max_iterations=1
     )
+
     mobile_full_aligned = apply_affine_to_atomarray(mobile, transform)
     return mobile_full_aligned
+
+def rmsd_ca_chain(static_arr, mobile_arr, chain_id: str, res_ids=None) -> float:
+    """
+    RMSD between CA atoms of `static_arr` and `mobile_arr` for one chain.
+    Matches by res_id (via sorting). Optionally restrict to res_ids.
+    Returns NaN if too few matched residues.
+    """
+    s = static_arr[(static_arr.chain_id == chain_id) & (static_arr.atom_name == "CA")]
+    m = mobile_arr[(mobile_arr.chain_id == chain_id) & (mobile_arr.atom_name == "CA")]
+
+    if res_ids is not None:
+        res_ids = np.asarray(res_ids, dtype=int)
+        s = s[np.isin(s.res_id, res_ids)]
+        m = m[np.isin(m.res_id, res_ids)]
+
+    # Sort by residue id so both arrays are in the same order
+    s = s[np.argsort(s.res_id)]
+    m = m[np.argsort(m.res_id)]
+
+    # Keep only common residue ids (handles missing residues cleanly)
+    common = np.intersect1d(s.res_id.astype(int), m.res_id.astype(int))
+    if common.size < 4:
+        return float("nan")
+
+    s = s[np.isin(s.res_id.astype(int), common)]
+    m = m[np.isin(m.res_id.astype(int), common)]
+
+    # After intersect+filter, re-sort to guarantee identical order
+    s = s[np.argsort(s.res_id)]
+    m = m[np.argsort(m.res_id)]
+
+    d = (s.coord.astype(float) - m.coord.astype(float))
+    return float(np.sqrt(np.mean(np.sum(d * d, axis=1))))
+
 
 # -------------------------
 # CGO arrow helper (for PyMOL script text)
@@ -204,8 +451,7 @@ def get_tcr_points_world(
     out_dir: str,
     alpha_chain_id: str = "A",
     beta_chain_id: str = "B",
-    vis_folder: str = None,
-) -> tuple[Points, Points]:
+    vis_folder: str = None):
     """
     Return Apts, Bpts as Points in the ORIGINAL complex frame.
 
@@ -233,7 +479,7 @@ def get_tcr_points_world(
 
     input_structure = btsio.load_structure(input_pdb, model=1)
 
-    aligned_input_to_alpha=align_with_biotite(
+    aligned_input_to_alpha=align_with_biotite_strict(
         static=consA_pca_structure,
         mobile=input_structure,
         chain_name="A",
@@ -242,7 +488,7 @@ def get_tcr_points_world(
     )
 
     # ---- 2) align consensus B → aligned_input on chain B (writes aligned_consB_path) ----
-    aligned_consB=align_with_biotite(
+    aligned_consB=align_with_biotite_strict(
         static=aligned_input_to_alpha,
         mobile=consB_pca_structure,
         chain_name="B",
@@ -285,15 +531,51 @@ def get_tcr_points_world(
         V1 = cons_to_world(B_cons.V1),
         V2 = cons_to_world(B_cons.V2),
     )
+    alpha_cdr3 = compute_cdr3_bend_metric_from_anchors(
+        input_pdb=input_pdb,
+        chain_id=alpha_chain_id,
+        chain_centroid=A_world.C,
+        anchor_pre_resseq=104,
+        anchor_post_resseq=118,
+    )
+    beta_cdr3 = compute_cdr3_bend_metric_from_anchors(
+        input_pdb=input_pdb,
+        chain_id=beta_chain_id,
+        chain_centroid=B_world.C,
+        anchor_pre_resseq=104,
+        anchor_post_resseq=118,
+    )
+    consB_aligned_tcr = apply_affine_to_atomarray(aligned_consB, transform)
+    consA_aligned_tcr = apply_affine_to_atomarray(consA_pca_structure, transform)
+    alpha_rmsd = rmsd_ca_chain(
+            static_arr=input_structure,
+            mobile_arr=consA_aligned_tcr,
+            chain_id=alpha_chain_id,
+            res_ids=A_consenus_res,   # recommended
+        )
+
+    beta_rmsd = rmsd_ca_chain(
+            static_arr=input_structure,
+            mobile_arr=consB_aligned_tcr,
+            chain_id=beta_chain_id,
+            res_ids=B_consenus_res,   # recommended
+        )
+    print(f"alpha_rmsd={alpha_rmsd:.2f} Å, beta_rmsd={beta_rmsd:.2f} Å")
+    if alpha_rmsd > 8.0 or beta_rmsd > 8.0:
+        raise RuntimeError(
+            f"High RMSD after alignment: alpha_rmsd={alpha_rmsd:.2f} Å, beta_rmsd={beta_rmsd:.2f} Å"
+        )
     if vis_folder is not None:
         #transform the consB_pca_path protein structure
-        consB_aligned_tcr = apply_affine_to_atomarray(consB_pca_structure, transform)
         consB_in_tcr_frame = os.path.join(vis_folder, "consB_aligned_for_points.pdb")
         btsio.save_structure(consB_in_tcr_frame, consB_aligned_tcr)
         #transform the consA_pca_path protein structure
-        consA_aligned_tcr = apply_affine_to_atomarray(consA_pca_structure, transform)
         consA_in_tcr_frame = os.path.join(vis_folder, "consA_aligned_for_points.pdb")
         btsio.save_structure(consA_in_tcr_frame, consA_aligned_tcr)
+
+
+
+
         generate_pymol_script(
             input_aligned_viz=input_pdb,
             consA_pdb=consA_in_tcr_frame,
@@ -301,9 +583,11 @@ def get_tcr_points_world(
             Apts=A_world,
             Bpts=B_world,
             vis_folder=vis_folder,
+            alpha_cdr3=alpha_cdr3,
+            beta_cdr3=beta_cdr3,
         )
 
-    return A_world, B_world
+    return A_world, B_world,alpha_cdr3, beta_cdr3
 
 def calc_tcr_geo_main(input_pdb, out_dir, alpha_chain_id="A", beta_chain_id="B", vis_folder=None):
     """
@@ -325,7 +609,7 @@ def calc_tcr_geo_main(input_pdb, out_dir, alpha_chain_id="A", beta_chain_id="B",
         content = f.read().strip()
     B_consenus_res = [int(x) for x in content.split(",") if x.strip()]
 
-    Apts, Bpts = get_tcr_points_world(input_pdb=input_pdb,out_dir=out_dir,alpha_chain_id=alpha_chain_id,beta_chain_id=beta_chain_id, vis_folder=vis_folder)
+    Apts, Bpts, alpha_cdr3, beta_cdr3 = get_tcr_points_world(input_pdb=input_pdb,out_dir=out_dir,alpha_chain_id=alpha_chain_id,beta_chain_id=beta_chain_id, vis_folder=vis_folder)
 
     # Compute geometry
     Cvec = as_unit(Bpts.C - Apts.C)
@@ -356,23 +640,35 @@ def calc_tcr_geo_main(input_pdb, out_dir, alpha_chain_id="A", beta_chain_id="B",
     if AC1 > 0:
         AC1 = -AC1          # AC1 always negative
 
-    # Optional canonicalization for BC2:
-    if np.dot(B2, nA) > 0:  # or any other global convention you like
-        BC2 = -BC2
-
 
     dc  = float(np.linalg.norm(Bpts.C - Apts.C))
 
-
+    if alpha_cdr3["sign_reliable"] is False:
+        input(f"Unreliable alpha bend sign for {input_pdb}")
+        alpha_cdr3["bend_signed_deg"] = float("nan")
+    if beta_cdr3["sign_reliable"] is False:
+        input(f"Unreliable alpha bend sign for {input_pdb}")
+        beta_cdr3["bend_signed_deg"] = float("nan")
 
     return {
-        "BA": BA, "BC1": BC1, "AC1": AC1, "BC2": BC2, "AC2": AC2, "dc": dc
+        "BA": BA, "BC1": BC1, "AC1": AC1, "BC2": BC2, "AC2": AC2, "dc": dc,
+        "alpha_cdr3_bend_deg": alpha_cdr3["bend_signed_deg"],
+        "alpha_cdr3_apex_height_A": alpha_cdr3["apex_height_A"],
+        #"alpha_cdr3_anchor_pre": alpha_cdr3["anchor_pre_resi"],
+        #"alpha_cdr3_anchor_post": alpha_cdr3["anchor_post_resi"],
+        "alpha_cdr3_apex_resi": alpha_cdr3["apex_resi"],
+        "beta_cdr3_bend_deg": beta_cdr3["bend_signed_deg"],
+        "beta_cdr3_apex_height_A": beta_cdr3["apex_height_A"],
+        #"beta_cdr3_anchor_pre": beta_cdr3["anchor_pre_resi"],
+        #"beta_cdr3_anchor_post": beta_cdr3["anchor_post_resi"],
+        "beta_cdr3_apex_resi": beta_cdr3["apex_resi"],
     }
 
 # -------------------------
 # PyMOL visualization (matches your previous style)
 # -------------------------
-def generate_pymol_script(input_aligned_viz, consA_pdb, consB_pdb, Apts, Bpts, vis_folder):
+def generate_pymol_script(input_aligned_viz, consA_pdb, consB_pdb, Apts, Bpts, vis_folder, alpha_cdr3, beta_cdr3):
+
     pdb_name = Path(input_aligned_viz).stem
     scale = 1.0
 
@@ -387,6 +683,32 @@ def generate_pymol_script(input_aligned_viz, consA_pdb, consB_pdb, Apts, Bpts, v
     png_path = os.path.join(vis_folder, f"{pdb_name}_final_vis.png")
     pse_path = os.path.join(vis_folder, f"{pdb_name}_final_vis.pse")
     vis_script = os.path.join(vis_folder, "vis.py")
+
+    # Alpha CDR3 bend points
+    aA = alpha_cdr3["A_anchor"].tolist()
+    aB = alpha_cdr3["B_anchor"].tolist()
+    aM = alpha_cdr3["M_mid"].tolist()
+    aC = alpha_cdr3["C_chain"].tolist()
+    aR = alpha_cdr3["R_apex"].tolist()
+    a_anchor_pre = alpha_cdr3["anchor_pre_resi"]
+    a_anchor_post = alpha_cdr3["anchor_post_resi"]
+    a_apex = alpha_cdr3["apex_resi"]
+    a_bend = alpha_cdr3["bend_signed_deg"]
+
+    # Beta CDR3 bend points
+    bA = beta_cdr3["A_anchor"].tolist()
+    bB = beta_cdr3["B_anchor"].tolist()
+    bM = beta_cdr3["M_mid"].tolist()
+    bC = beta_cdr3["C_chain"].tolist()
+    bR = beta_cdr3["R_apex"].tolist()
+    b_anchor_pre = beta_cdr3["anchor_pre_resi"]
+    b_anchor_post = beta_cdr3["anchor_post_resi"]
+    b_apex = beta_cdr3["apex_resi"]
+    b_bend = beta_cdr3["bend_signed_deg"]
+
+    a_label = f"α CDR3 bend: {a_bend:.1f}"
+    b_label = f"β CDR3 bend: {b_bend:.1f}"
+
 
     script = f"""
 import numpy as np
@@ -473,6 +795,48 @@ cmd.show("labels", "label_alpha_chain_{pdb_name} or label_beta_chain_{pdb_name}"
 cmd.set("label_size", 20, "label_alpha_chain_{pdb_name} or label_beta_chain_{pdb_name}")
 cmd.set("label_color", "black", "label_alpha_chain_{pdb_name} or label_beta_chain_{pdb_name}")
 cmd.set("label_outline_color", "white", "label_alpha_chain_{pdb_name} or label_beta_chain_{pdb_name}")
+
+
+# -----------------------------
+# CDR3 bend visualization (anchor 104 -> 118)
+# -----------------------------
+cmd.pseudoatom("A_pre_{pdb_name}",  pos={aA}, color="tv_red")
+cmd.pseudoatom("A_post_{pdb_name}", pos={aB}, color="tv_red")
+cmd.pseudoatom("A_mid_{pdb_name}",  pos={aM}, color="red")
+cmd.pseudoatom("A_apex_{pdb_name}", pos={aR}, color="red")
+
+cmd.pseudoatom("B_pre_{pdb_name}",  pos={bA}, color="tv_orange")
+cmd.pseudoatom("B_post_{pdb_name}", pos={bB}, color="tv_orange")
+cmd.pseudoatom("B_mid_{pdb_name}",  pos={bM}, color="orange")
+cmd.pseudoatom("B_apex_{pdb_name}", pos={bR}, color="orange")
+
+cmd.show("spheres", "A_pre_{pdb_name} or A_post_{pdb_name} or A_mid_{pdb_name} or A_apex_{pdb_name} or "
+                   "B_pre_{pdb_name} or B_post_{pdb_name} or B_mid_{pdb_name} or B_apex_{pdb_name}")
+cmd.set("sphere_scale", 0.45)
+
+# Highlight the corresponding CA atoms on the input structure
+cmd.show("sticks", "input_{pdb_name} and chain A and resi {a_anchor_pre}+{a_anchor_post}+{a_apex} and name CA")
+cmd.show("sticks", "input_{pdb_name} and chain B and resi {b_anchor_pre}+{b_anchor_post}+{b_apex} and name CA")
+
+cmd.set("stick_radius", 0.25)
+
+# Arrows: anchor chord, midpoint->chain centroid, midpoint->apex
+cmd.load_cgo({add_cgo_arrow(aA, aB, (0.8, 0.0, 0.0), radius=0.22)}, "A_anchor_chord_{pdb_name}")
+cmd.load_cgo({add_cgo_arrow(aM, A_C, (1.0, 0.3, 0.3), radius=0.20)}, "A_mid_to_chaincent_{pdb_name}")
+cmd.load_cgo({add_cgo_arrow(aM, aR, (0.5, 0.0, 0.0), radius=0.20)}, "A_mid_to_apex_{pdb_name}")
+
+cmd.load_cgo({add_cgo_arrow(bA, bB, (1.0, 0.5, 0.0), radius=0.22)}, "B_anchor_chord_{pdb_name}")
+cmd.load_cgo({add_cgo_arrow(bM, B_C, (1.0, 0.7, 0.3), radius=0.20)}, "B_mid_to_chaincent_{pdb_name}")
+cmd.load_cgo({add_cgo_arrow(bM, bR, (0.6, 0.35, 0.0), radius=0.20)}, "B_mid_to_apex_{pdb_name}")
+
+# Bend labels
+cmd.pseudoatom("A_bend_label_{pdb_name}", pos={aM}, label="{a_label}")
+cmd.pseudoatom("B_bend_label_{pdb_name}", pos={bM}, label="{b_label}")
+
+cmd.hide("everything", "A_bend_label_{pdb_name} or B_bend_label_{pdb_name}")
+cmd.show("labels", "A_bend_label_{pdb_name} or B_bend_label_{pdb_name}")
+cmd.set("label_outline_color", "white", "A_bend_label_{pdb_name} or B_bend_label_{pdb_name}")
+
 
 cmd.orient()
 cmd.zoom("all", 1.2)

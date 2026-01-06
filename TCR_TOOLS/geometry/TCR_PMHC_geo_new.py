@@ -274,8 +274,7 @@ def process(tcrpmhc_complex, out_dir, vis_folder=None,
     BA=angles_dict_tcr["BA"]
     dc=angles_dict_tcr["dc"]
     print(AC1, AC2, BC1, BC2, BA, dc)
-    Apts_orig, Bpts_orig = get_tcr_points_world(pdb_full_renumbered, out_dir, alpha_chain_id=alpha_chain_id,beta_chain_id=beta_chain_id)
-
+    Apts_orig, Bpts_orig,alpha_cdr3, beta_cdr3 = get_tcr_points_world(pdb_full_renumbered, out_dir, alpha_chain_id=alpha_chain_id,beta_chain_id=beta_chain_id)
 
     # ----------------- TCR–pMHC geometry on ORIGINAL input -----------------
     # MHC CA coords in original frame (chains M / N)
@@ -379,6 +378,16 @@ def process(tcrpmhc_complex, out_dir, vis_folder=None,
         "phi_pc1A": phi_pc1A,
         "theta_pc1B": theta_pc1B,
         "phi_pc1B": phi_pc1B,
+        "alpha_cdr3_bend_deg": alpha_cdr3["bend_angle_deg"],
+        "alpha_cdr3_apex_height_A": alpha_cdr3["apex_height_A"],
+        #"alpha_cdr3_anchor_pre": alpha_cdr3["anchor_pre_resi"],
+        #"alpha_cdr3_anchor_post": alpha_cdr3["anchor_post_resi"],
+        "alpha_cdr3_apex_resi": alpha_cdr3["apex_resi"],
+        "beta_cdr3_bend_deg": beta_cdr3["bend_angle_deg"],
+        "beta_cdr3_apex_height_A": beta_cdr3["apex_height_A"],
+        #"beta_cdr3_anchor_pre": beta_cdr3["anchor_pre_resi"],
+        #"beta_cdr3_anchor_post": beta_cdr3["anchor_post_resi"],
+        "beta_cdr3_apex_resi": beta_cdr3["apex_resi"],
         # QC / legacy
         #"tilt_alpha_mhc": tilt_alpha_mhc,
         #"tilt_beta_mhc": tilt_beta_mhc,
