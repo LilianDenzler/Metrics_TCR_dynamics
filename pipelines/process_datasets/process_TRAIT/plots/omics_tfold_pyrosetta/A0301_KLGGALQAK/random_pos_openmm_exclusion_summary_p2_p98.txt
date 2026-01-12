@@ -1,0 +1,17 @@
+Percentile trimming summary (2.0–98.0%)
+Source CSV: omics_A0301_KLGGALQAK_tfold_openmm_pos.csv
+============================================================
+
+Total structures      : 500
+Structures kept       : 429
+Structures excluded   : 71
+
+Excluded per metric:
+  total_score                        : 20
+  interface_dG_tcr_pmhc              : 20
+  dG_separated_tcr_pmhc              : 20
+  delta_sasa_tcr_pmhc                : 20
+  interface_dG_pep_mhc               : 20
+  dG_separated_pep_mhc               : 20
+  delta_sasa_pep_mhc                 : 20
+  dE_binding_tcr_pmhc                : 20

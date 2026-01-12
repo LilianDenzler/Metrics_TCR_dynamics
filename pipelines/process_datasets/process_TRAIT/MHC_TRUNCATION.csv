@@ -1,9 +1,9 @@
 MHC_name,start,end,link
-HLA-A,25,298,https://www.uniprot.org/uniprotkb/P04439/feature-viewer
-HLA-B,25,298,https://www.uniprot.org/uniprotkb/P01889/feature-viewer
-HLA-C,25,298,https://www.uniprot.org/uniprotkb/P10321/feature-viewer
-HLA-DRB1,30,227,https://www.uniprot.org/uniprotkb/P01911/feature-viewer
-HLA-DQA1,24,204,https://www.uniprot.org/uniprotkb/P01906/feature-viewer
-HLA-DQB1,33,220,https://www.uniprot.org/uniprotkb/P01920/feature-viewer
-HLA-DPA1,30,227,https://www.uniprot.org/uniprotkb/P01911/feature-viewer
-HLA-DPB1,30,215,https://www.uniprot.org/uniprotkb/P04440/feature-viewer
+HLA-A,25,206,https://www.uniprot.org/uniprotkb/P04439/feature-viewer
+HLA-B,25,206,https://www.uniprot.org/uniprotkb/P01889/feature-viewer
+HLA-C,25,206,https://www.uniprot.org/uniprotkb/P10321/feature-viewer
+HLA-DRB1,30,124,https://www.uniprot.org/uniprotkb/P01911/feature-viewer
+HLA-DQA1,24,110,https://www.uniprot.org/uniprotkb/P01906/feature-viewer
+HLA-DQB1,33,126,https://www.uniprot.org/uniprotkb/P01920/feature-viewer
+HLA-DPA1,30,124,https://www.uniprot.org/uniprotkb/P01911/feature-viewer
+HLA-DPB1,30,121,https://www.uniprot.org/uniprotkb/P04440/feature-viewer

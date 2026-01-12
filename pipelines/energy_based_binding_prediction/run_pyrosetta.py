@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 import os
 import sys
 import math
@@ -27,8 +25,16 @@ from sys import stdout
 import shutil
 warnings.filterwarnings("ignore", ".*is discontinuous.*")
 
-Points = namedtuple("Points", ["C", "V1", "V2"])
-
+"""
+This script will be used for running the energy minimization and Rosetta energy calcualtions for TCR complex structures
+Important things to note are:
+- Before running, please check all TCR complex pdb files are standardised (i.e. chains are uniformely named, TCR-a always D, TCR-b always E etc. the actual names can be adapten in the main run block)
+- Also, the complexes should be standardised so that MHC is truncated to same length (recommended is only the alpha1 and alpha2 domains / alpha1 and beta1 domains if MHC2)
+TCRs should also be uniformely truncated (i.e. always just variable domain, or always full. recommended is only variable domain)
+- Openmm energy minimisation yields the best results in my preliminary experiments
+- rosetta sidechain packing is very fast compared to , and can be run in addition to openmm energy minimisation
+- running rosetta with no energy minimisation is recommended for a baseline comparison
+"""
 
 # Per-process PyRosetta init flag
 _PYROSETTA_INITIALIZED = False
@@ -591,10 +597,10 @@ def run_folder(
 # --------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    base_dir="/mnt/larry/lilian/DATA/ATLAS/structures/true_pdb"
-    fixed_dir="/mnt/larry/lilian/DATA/ATLAS/structures/true_pdb_opnemm_minimised"
+    base_dir="PATH/TO/FOLDER/WITH/PDB/FILES"
+    fixed_dir="PATH/TO/FOLDER/WITH/PDB/FILES/opnemm_minimised" #here we store the openmm minimized structures for future reference
     os.makedirs(fixed_dir, exist_ok=True)
-    #ATLAS standardises, so that the chains are always named the same way
+    #standardised, so that the chains are always named the same way, THIS IS IMPORTANT, MUST CHECK BEFORE RUNNING, otherwise wrong interfaces are used for calculation!
     tcr_alpha="D"
     tcr_beta="E"
     mhc_alpha="A"
@@ -602,11 +608,8 @@ if __name__ == "__main__":
     peptide="C"
     modes = ["none", "rosetta_sidechain", "rosetta_full", "openmm"]
     for mode in modes:
-        if mode in ["rosetta_sidechain", "rosetta_full", "none"]:
-            num_workers=4
-        else:
-            num_workers=4 #do 1 if using GPU
-        out_csv = f"{args.prefix}_{mode}.csv"
+        num_workers=4 #do 1 if using only 1 GPU
+        out_csv = f"PATH_TO_OUTPUT_FILE.csv"
         run_folder(
             base_dir=base_dir,
             fixed_dir=fixed_dir,

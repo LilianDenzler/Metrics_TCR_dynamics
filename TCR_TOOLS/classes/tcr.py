@@ -437,6 +437,8 @@ class TCRPairView:
         Return sequences for all CDR/FR regions from this pair view.
         """
         seqs: Dict[str, str] = {}
+        CDR_FR_RANGES["A_variable"]=VARIABLE_RANGE
+        CDR_FR_RANGES["B_variable"]=VARIABLE_RANGE
         for rname, (s, e) in CDR_FR_RANGES.items():
             regions = [(rname, (s, e))]
             pred = make_region_atom_predicate(

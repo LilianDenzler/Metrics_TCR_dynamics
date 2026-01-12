@@ -1,0 +1,18 @@
+{
+  "csv_path": "/workspaces/Graphormer/TCR_Metrics/pipelines/analyse_geometry/data/TCR3d_unpaired_unbound.csv",
+  "model": "esmc_600m",
+  "device": "cuda",
+  "angle_encoding": "raw",
+  "ridge_alpha": 1.0,
+  "tcr_groupkfold_folds": 10,
+  "germline_holdout_folds": 5,
+  "germline_holdout_repeats": 10,
+  "min_tcrs_per_germline": 1,
+  "files_written": [
+    "eval_tcr_groupkfold.csv",
+    "eval_germline_holdout_repeated.csv",
+    "eval_germline_holdout.csv",
+    "summary_tcr_groupkfold.csv",
+    "summary_germline_holdout_overall.csv"
+  ]
+}

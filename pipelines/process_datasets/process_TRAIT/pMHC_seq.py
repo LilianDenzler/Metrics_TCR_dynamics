@@ -80,6 +80,7 @@ def get_alleles(allele_name, loaded_df=None):
     else:
         sequence = loaded_df.loc[loaded_df['allele'] == allele_name, 'sequence'].values[0]
     trunc_seq=truncate(allele_name, sequence)
+    #the truncation here is done, so that for MHC class 1 only somains alpha1 and alpah2 are kept, for MHC Class 2, alpha1 domain of alpha chains is kept and beta1 domain of beta chains is kept!
     return trunc_seq
 
 

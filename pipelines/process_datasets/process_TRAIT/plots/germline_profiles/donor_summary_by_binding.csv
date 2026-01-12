@@ -1,0 +1,9 @@
+Donor,binding_class,n_rows,n_unique_tcr,sum_count
+donor1,neg,1233593,24727,1978291
+donor1,pos,3483,3243,12109
+donor2,neg,658333,13224,3041967
+donor2,pos,4495,4033,33483
+donor3,neg,750231,15209,1668016
+donor3,pos,11343,10949,25034
+donor4,neg,700068,14014,1239592
+donor4,pos,930,858,4408

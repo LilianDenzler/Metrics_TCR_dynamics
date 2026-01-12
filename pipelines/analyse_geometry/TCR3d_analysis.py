@@ -31,6 +31,7 @@ def make_human_mouse_subsets(data_dir="/workspaces/Graphormer/TCR_Metrics/pipeli
         human_df.to_csv(f"{data_dir}/human_{dataset}", index=False)
         mouse_df.to_csv(f"{data_dir}/mouse_{dataset}", index=False)
 
+
 if __name__ == "__main__":
     make_angle_csvs()
     make_human_mouse_subsets()
