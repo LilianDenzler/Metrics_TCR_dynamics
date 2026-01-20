@@ -1,0 +1,8 @@
+best_method   coords_kpca_cosine  coords_pca  coords_kpca_poly  coords_diffmap  coords_kpca_rbf
+region_label                                                                                   
+CDR1α                          7           7                 2               2                1
+CDR2α                          6           8                 2               3                0
+CDR3α                          7           5                 6               1                0
+CDR1β                          6           4                 5               4                0
+CDR2β                          5           7                 4               3                0
+CDR3β                          9           4                 5               1                0

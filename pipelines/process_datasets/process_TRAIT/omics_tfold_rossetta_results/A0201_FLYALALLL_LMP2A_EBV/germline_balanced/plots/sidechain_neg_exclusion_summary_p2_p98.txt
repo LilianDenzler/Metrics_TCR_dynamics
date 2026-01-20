@@ -1,0 +1,10 @@
+Excluded 55 / 500 structures
+
+total_score                        : 20
+interface_dG_tcr_pmhc              : 20
+dG_separated_tcr_pmhc              : 20
+delta_sasa_tcr_pmhc                : 10
+interface_dG_pep_mhc               : 20
+dG_separated_pep_mhc               : 20
+delta_sasa_pep_mhc                 : 10
+dE_binding_tcr_pmhc                : 20

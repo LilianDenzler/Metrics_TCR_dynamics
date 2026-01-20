@@ -37,12 +37,77 @@ def mantel(D1: np.ndarray, D2: np.ndarray, method="spearman", permutations=9999,
     pval = (ge+1)/(permutations+1)
     return r_obs, pval
 
-def rmsd_matrix(traj: md.Trajectory, atom_indices: np.ndarray) -> np.ndarray:
-    n = traj.n_frames
-    M = np.empty((n,n), float)
-    for i in range(n):
-        M[:, i] = md.rmsd(traj, traj, frame=i, atom_indices=atom_indices) * 10.0
-    return 0.5*(M+M.T)
+def cross_rmsd_matrix(
+    traj_a: md.Trajectory,
+    traj_b: md.Trajectory,
+    idx_a: np.ndarray,
+    idx_b: np.ndarray,
+    superpose: bool = True,
+) -> np.ndarray:
+    """
+    Cross RMSD matrix (Å): shape (n_a, n_b), distances between frames in traj_a and traj_b.
+
+    superpose=True  -> best-fit RMSD per pair (mdtraj.rmsd with ref frame)
+    superpose=False -> fixed-frame RMSD in current coordinates (NO re-fit)
+                       Requires traj_a and traj_b to already be in the SAME coordinate frame.
+    """
+    Ta = traj_a.atom_slice(idx_a)
+    Tb = traj_b.atom_slice(idx_b)
+
+    Xa = Ta.xyz  # (na,k,3) nm
+    Xb = Tb.xyz  # (nb,k,3) nm
+    na, k, _ = Xa.shape
+    nb = Xb.shape[0]
+
+    if superpose:
+        C = np.empty((na, nb), float)
+        for j in range(nb):
+            # RMSD of all frames in Ta to frame j of Tb, best-fit on selected atoms
+            C[:, j] = md.rmsd(Ta, Tb, frame=j) * 10.0
+        return C
+
+    # fixed-frame cross RMSD
+    Ya = Xa.reshape(na, 3 * k)
+    Yb = Xb.reshape(nb, 3 * k)
+    G = Ya @ Yb.T
+    sa = np.sum(Ya * Ya, axis=1)
+    sb = np.sum(Yb * Yb, axis=1)
+    D2 = sa[:, None] + sb[None, :] - 2.0 * G
+    D2 = np.maximum(D2, 0.0)
+    C_nm = np.sqrt(D2 / k)
+    return C_nm * 10.0  # Å
+
+
+def rmsd_matrix(traj: md.Trajectory, atom_indices: np.ndarray, rmsd_superpose: bool = True) -> np.ndarray:
+    """
+    Pairwise RMSD matrix (Å) between frames, using either:
+      - rmsd_superpose=True: best-fit RMSD (mdtraj.rmsd; re-fits per pair)
+      - rmsd_superpose=False: fixed-frame RMSD (NO re-fit; uses current coordinates)
+    Assumes traj.xyz is in nm (mdtraj default). Output is in Å.
+    """
+    T = traj.atom_slice(atom_indices)
+    X = T.xyz  # (n, k, 3) in nm
+    n, k, _ = X.shape
+
+    if rmsd_superpose:
+        M = np.empty((n, n), float)
+        for i in range(n):
+            # md.rmsd returns nm; convert to Å
+            M[:, i] = md.rmsd(T, T, frame=i) * 10.0
+        return 0.5 * (M + M.T)
+
+    # fixed-frame RMSD: RMSD(i,j) = sqrt( mean_a ||X_i(a)-X_j(a)||^2 )
+    # Vectorize via flattened coordinates and quadratic form
+    Y = X.reshape(n, 3 * k)  # nm
+    G = Y @ Y.T              # (n,n) nm^2
+    sq = np.diag(G)          # (n,) nm^2
+    # squared euclidean distance in R^(3k)
+    D2 = sq[:, None] + sq[None, :] - 2.0 * G
+    D2 = np.maximum(D2, 0.0)
+
+    # Convert squared euclidean to RMSD: divide by k, sqrt
+    M_nm = np.sqrt(D2 / k)
+    return M_nm * 10.0  # Å
 
 def mantel_rmsd_vs_embedding(
     tv_gt,
@@ -50,6 +115,7 @@ def mantel_rmsd_vs_embedding(
     Z_gt: np.ndarray,
     Z_pred: Optional[np.ndarray],
     region_names,
+    rmsd_superpose: bool = False,
     atom_names={"CA"},
     method: str = "spearman",
     permutations: int = 9999,
@@ -80,7 +146,7 @@ def mantel_rmsd_vs_embedding(
     Zg = Z_gt[Igt]
 
     # RMSD distances in structure space (GT)
-    Dg = rmsd_matrix(Tgt, idx_gt)
+    Dg = rmsd_matrix(Tgt, idx_gt, rmsd_superpose=rmsd_superpose)
     # Distances in embedding space (GT)
     Eg = squareform(pdist(Zg))
 
@@ -109,7 +175,7 @@ def mantel_rmsd_vs_embedding(
     Zp = Z_pred[Ipr]
 
     # RMSD distances in structure space (Pred)
-    Dp = rmsd_matrix(Tpr, idx_pr)
+    Dp = rmsd_matrix(Tpr, idx_pr, rmsd_superpose=rmsd_superpose)
 
     # Cross RMSD between GT and Pred
     C = np.empty((Tpr.n_frames, Tgt.n_frames), float)

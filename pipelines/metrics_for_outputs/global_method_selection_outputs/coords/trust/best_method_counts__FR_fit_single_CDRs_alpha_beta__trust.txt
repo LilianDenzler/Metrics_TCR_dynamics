@@ -1,0 +1,8 @@
+best_method      coords_pca  coords_diffmap  coords_kpca_cosine  coords_kpca_poly  coords_kpca_rbf
+region_label                                                                                      
+FR-fitted CDR1α          15               0                   2                 2                0
+FR-fitted CDR2α          14               2                   1                 2                0
+FR-fitted CDR3α          13               4                   2                 0                0
+FR-fitted CDR1β          11               3                   2                 3                0
+FR-fitted CDR2β          14               3                   2                 0                0
+FR-fitted CDR3β           9               3                   2                 4                1

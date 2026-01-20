@@ -66,6 +66,34 @@ class TrajectoryView:
         self._traj = traj
         self._top = traj.topology
         self._chain_map = chain_map  # e.g., {"alpha": "A", "beta": "B"}
+        topo_chain_ids = self._top_chain_ids()
+
+        # If expected chain IDs aren't present, but there are exactly 2 chains,
+        # remap alpha/beta to the actual chain IDs in the topology.
+        a = self._chain_map.get("alpha")
+        b = self._chain_map.get("beta")
+
+        if (a not in topo_chain_ids) or (b not in topo_chain_ids):
+            if len(topo_chain_ids) == 2:
+                # Preserve deterministic ordering by chain.index
+                ordered = self._top_chain_ids(ordered=True)
+                self._chain_map["alpha"] = ordered[0]
+                self._chain_map["beta"]  = ordered[1]
+            else:
+                raise RuntimeError(
+                    f"TrajectoryView chain_map {self._chain_map} does not match topology chain ids "
+                    f"{sorted(list(topo_chain_ids))}. Cannot safely select regions."
+                )
+
+    def _top_chain_ids(self, ordered: bool = False):
+        ids = []
+        for c in self._top.chains:
+            cid = getattr(c, "chain_id", None) or getattr(c, "id", None) or str(c.index)
+            cid = str(cid).strip()
+            ids.append((c.index, cid))
+        if ordered:
+            return [cid for _, cid in sorted(ids, key=lambda x: x[0])]
+        return {cid for _, cid in ids}
 
     @property
     def mdtraj(self) -> md.Trajectory:
@@ -117,7 +145,13 @@ class TrajectoryView:
                 continue
             chain_obj = res.chain
             # mdtraj Topology has .chain_id for PDB; fall back to index if absent
-            chain_id = getattr(chain_obj, "chain_id", None) or str(chain_obj.index)
+            chain_id = (
+                getattr(chain_obj, "chain_id", None)
+                or getattr(chain_obj, "id", None)
+                or str(chain_obj.index)
+            )
+            chain_id = str(chain_id).strip()
+
 
             if chain_id not in intervals_by_chain:
                 continue
@@ -128,8 +162,24 @@ class TrajectoryView:
             for (s, e) in intervals_by_chain[chain_id]:
                 if s <= resnum <= e:
                     if atom_names is None or atom.name in atom_names:
+                        print(atom.name, atom_names)
                         atom_idxs.append(atom.index)
-                        atom_list.append((chain_id, resnum, atom.name))
+                        print(atom.index)
+                        icode = ""
+                        # mdtraj residue insertion code is not guaranteed to exist; handle defensively
+                        for attr in ("insertion_code", "icode", "insertionCode", "ins_code"):
+                            if hasattr(res, attr):
+                                v = getattr(res, attr)
+                                if v is None:
+                                    icode = ""
+                                else:
+                                    icode = str(v).strip()
+                                    if icode == "" or icode == " ":
+                                        icode = ""
+                                break
+
+                        atom_list.append((chain_id, resnum, icode, atom.name))
+
                     break
 
         if not atom_idxs:
@@ -371,7 +421,12 @@ class TCRPairView:
                 continue
             if pred(chain.id, res, atom.get_name()):
                 idxs.append(i)
-                atom_list.append((chain.id, res.get_id()[1], atom.get_name()))
+                resseq = res.get_id()[1]
+                icode = res.get_id()[2].strip() if isinstance(res.get_id()[2], str) else str(res.get_id()[2]).strip()
+                if icode == "" or icode == " ":
+                    icode = ""
+                atom_list.append((chain.id, resseq, icode, atom.get_name()))
+
 
         if not idxs:
             raise ValueError(
@@ -738,6 +793,9 @@ class TCR:
                 ]
                 self._traj.atom_slice(atom_idx, inplace=False)
                 subtraj = self._traj.atom_slice(atom_idx, inplace=False)
+                if len(atom_idx) == 0:
+                    raise RuntimeError(f"No atoms selected for chains {aid},{bid} from trajectory topology.")
+
 
                 pair_top = self._pair_topology_from_biopdb(s_view)
                 print(

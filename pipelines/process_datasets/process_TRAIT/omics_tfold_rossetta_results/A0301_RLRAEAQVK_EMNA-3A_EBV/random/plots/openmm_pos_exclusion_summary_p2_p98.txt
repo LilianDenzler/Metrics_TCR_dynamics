@@ -1,0 +1,10 @@
+Excluded 42 / 289 structures
+
+total_score                        : 12
+interface_dG_tcr_pmhc              : 12
+dG_separated_tcr_pmhc              : 12
+delta_sasa_tcr_pmhc                : 12
+interface_dG_pep_mhc               : 12
+dG_separated_pep_mhc               : 12
+delta_sasa_pep_mhc                 : 12
+dE_binding_tcr_pmhc                : 12

@@ -1,0 +1,10 @@
+Excluded 6 / 30 structures
+
+total_score                        : 2
+interface_dG_tcr_pmhc              : 2
+dG_separated_tcr_pmhc              : 2
+delta_sasa_tcr_pmhc                : 2
+interface_dG_pep_mhc               : 2
+dG_separated_pep_mhc               : 2
+delta_sasa_pep_mhc                 : 2
+dE_binding_tcr_pmhc                : 2

@@ -1,0 +1,2 @@
+TCR_name,minimization_mode,total_score,tcr_chains,pmhc_chains,peptide_chain,mhc_only_chains,partners_tcr_pmhc,partners_pep_mhc,interface_dG_tcr_pmhc,dG_separated_tcr_pmhc,delta_sasa_tcr_pmhc,interface_dG_pep_mhc,dG_separated_pep_mhc,delta_sasa_pep_mhc,dE_binding_tcr_pmhc
+Binding_donor4_row0_cand000001,rosetta_sidechain,57072.78323085041,AB,MP,P,M,MP_AB,M_P,47116.03484812237,47116.03484812237,3416.853075534893,8577.953523146452,8577.953523146452,885.9770822031475,47116.03484812179

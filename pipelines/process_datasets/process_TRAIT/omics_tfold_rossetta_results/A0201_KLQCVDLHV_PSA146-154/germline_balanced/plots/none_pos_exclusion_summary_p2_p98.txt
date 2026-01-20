@@ -1,0 +1,10 @@
+Excluded 0 / 1 structures
+
+total_score                        : 0
+interface_dG_tcr_pmhc              : 0
+dG_separated_tcr_pmhc              : 0
+delta_sasa_tcr_pmhc                : 0
+interface_dG_pep_mhc               : 0
+dG_separated_pep_mhc               : 0
+delta_sasa_pep_mhc                 : 0
+dE_binding_tcr_pmhc                : 0

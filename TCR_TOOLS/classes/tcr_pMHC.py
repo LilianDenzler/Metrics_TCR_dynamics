@@ -39,8 +39,8 @@ from Bio.PDB import Superimposer
 import re
 from copy import deepcopy
 from TCR_TOOLS.geometry.__init__ import DATA_PATH
-from TCR_TOOLS.__init__ import CDR_FR_RANGES,VARIABLE_RANGE, A_FR_ALIGN, B_FR_ALIGN
-
+from TCR_TOOLS.__init__ import CDR_FR_RANGES,VARIABLE_RANGE, A_FR_ALIGN, B_FR_ALIGN,IMGT_DB_PATH
+from TCR_TOOLS.numbering.get_HLA_from_seq import blastp_imgt_hla
 
 # -------------------------------------------------------------------
 # Small helper: rename two chains (pure OR inplace variant)
@@ -68,9 +68,10 @@ def rename_two_chains_exact_inplace(
 class TCRpMHC:
     input_pdb: str
     name: Optional[str] = None
-    MHC_a_chain_id: str = "M"
-    MHC_b_chain_id: str = "N"
-    Peptide_chain_id: str = "P"
+    #if i already know exactely what the chanid of the mhc chain,tcr chains etc,  is in my input pdb can put it here, to override any automatic assignment
+    MHC_a_chain_id: Optional[str] = None
+    MHC_b_chain_id: Optional[str] = None
+    Peptide_chain_id: Optional[str] = None
     TCR_a_chain_id: Optional[str] = None
     TCR_b_chain_id: Optional[str] = None
 
@@ -84,7 +85,220 @@ class TCRpMHC:
     imgt_all_structure: BPStructure.Structure = field(init=False)
     variable_structure: BPStructure.Structure = field(init=False, default=None)
     _traj: Optional[md.Trajectory] = field(init=False, default=None, repr=False)
+    mhc_alpha_allele: Optional[dict] = field(init=False, default=None)
+    mhc_beta_allele: Optional[dict] = field(init=False, default=None)
 
+
+    @staticmethod
+    def _extract_chain_sequence_from_structure(structure, chain_id: str) -> str:
+        model0 = next(structure.get_models())
+        if chain_id not in model0:
+            raise KeyError(f"Chain {chain_id!r} not found in structure.")
+        chain = model0[chain_id]
+
+        aa = []
+        for res in chain:
+            hetflag, resseq, icode = res.id
+            if hetflag != " ":
+                continue
+            try:
+                aa.append(seq1(res.get_resname(), custom_map={"UNK": "X"}))
+            except Exception:
+                continue
+        return "".join(aa)
+
+    @staticmethod
+    def _count_polymer_residues(structure, chain_id: str) -> int:
+        model0 = next(structure.get_models())
+        chain = model0[chain_id]
+        n = 0
+        for res in chain:
+            hetflag, _, _ = res.id
+            if hetflag == " ":
+                n += 1
+        return n
+
+    def _chain_exists(self, structure, chain_id: Optional[str]) -> bool:
+        if not chain_id:
+            return False
+
+        model0 = next(structure.get_models())
+        if chain_id not in model0:
+            return False
+
+        chain = model0[chain_id]
+
+        # Must have at least one polymer residue that looks like an amino acid.
+        for res in chain:
+            hetflag, _, _ = res.id
+            if hetflag != " ":
+                continue
+            try:
+                aa = seq1(res.get_resname(), custom_map={"UNK": "X"})
+            except Exception:
+                continue
+            if aa and aa != "?":
+                return True
+
+        return False
+
+
+    def _mhc_role_from_hit(self, hit: dict) -> Optional[str]:
+        allele_title = (hit or {}).get("stitle")
+        gene=allele_title.split("*")[0]
+        if not gene:
+            return None
+
+        # Class I heavy chain genes (HLA-A/B/C + non-classical)
+        mhc1_genes = {"A", "B", "C", "E", "F", "G"}
+
+        # Class II (alpha vs beta)
+        mhc2_alpha_genes = {"DRA", "DPA1", "DQA1", "DQA2", "DMA", "DOA"}
+        mhc2_beta_genes  = {"DRB1", "DRB3", "DRB4", "DRB5", "DPB1", "DQB1", "DQB2", "DMB", "DOB"}
+
+        if gene in mhc1_genes:
+            return "mhc1_heavy"
+        if gene in mhc2_alpha_genes:
+            return "mhc2_alpha"
+        if gene in mhc2_beta_genes:
+            return "mhc2_beta"
+        return None
+
+    def _infer_pmhc_chain_ids_if_needed(self) -> None:
+        """
+        Infer MHC alpha/beta and peptide chain IDs when not provided.
+
+        Uses the *gene* parsed from the top IPD-IMGT/HLA BLAST hit to decide:
+        - MHC-I heavy: HLA-A/B/C/E/F/G  -> MHC_a_chain_id
+        - MHC-II alpha: DRA/DPA1/DQA1   -> MHC_a_chain_id
+        - MHC-II beta:  DRB1/DPB1/DQB1  -> MHC_b_chain_id
+        Peptide = remaining short chain, validated <= 12 polymer residues.
+        """
+
+        model0 = next(self.imgt_all_structure.get_models())
+
+        # TCR chains must already be known (original PDB IDs)
+        tcr_alpha = self.chain_types_dict.get("A")
+        tcr_beta  = self.chain_types_dict.get("B")
+        if tcr_alpha is None or tcr_beta is None:
+            raise ValueError("TCR chains must be identified before pMHC inference.")
+
+        non_tcr_chain_ids = [c.id for c in model0 if c.id not in {tcr_alpha, tcr_beta}]
+        if not non_tcr_chain_ids:
+            raise ValueError("No non-TCR chains left to infer pMHC from.")
+
+        seq_by_chain = {cid: self._extract_chain_sequence_from_structure(self.imgt_all_structure, cid)
+                        for cid in non_tcr_chain_ids}
+        len_by_chain = {cid: len(seq_by_chain[cid]) for cid in non_tcr_chain_ids}
+
+        # BLAST only chains plausibly MHC-like
+        mhc_candidates = [cid for cid in non_tcr_chain_ids if len_by_chain[cid] >= 50]
+
+        hits = []
+        for cid in mhc_candidates:
+            hit = blastp_imgt_hla(seq_by_chain[cid], imgt_db_path=IMGT_DB_PATH)
+            if hit:
+                role = self._mhc_role_from_hit(hit)
+                if role:
+                    hits.append((cid, role, hit))
+
+        # Partition hits by role
+        mhc1_heavy = [(cid, hit) for (cid, role, hit) in hits if role == "mhc1_heavy"]
+        mhc2_alpha = [(cid, hit) for (cid, role, hit) in hits if role == "mhc2_alpha"]
+        mhc2_beta  = [(cid, hit) for (cid, role, hit) in hits if role == "mhc2_beta"]
+
+        def _best(hit_list):
+            # choose best by bitscore then identity then aln_len
+            return sorted(
+                hit_list,
+                key=lambda x: (x[1].get("bitscore", -1.0), x[1].get("identity", -1.0), x[1].get("aln_len", -1)),
+                reverse=True,
+            )[0] if hit_list else None
+
+        # Decide whether this looks like class II (both alpha+beta) or class I (heavy only)
+        class2_alpha_best = _best(mhc2_alpha)
+        class2_beta_best  = _best(mhc2_beta)
+        class1_best       = _best(mhc1_heavy)
+
+        used = set()
+
+        # --- Assign MHC chains by allele gene ---
+        if (class2_alpha_best is not None) or (class2_beta_best is not None):
+            # Treat as class II if either chain indicates class II; require both if possible.
+            if self.MHC_a_chain_id is None:
+                if class2_alpha_best is None:
+                    raise ValueError("Found MHC-II-like hits but none mapped to an alpha-chain gene (e.g., DRA/DPA1/DQA1).")
+                self.MHC_a_chain_id = class2_alpha_best[0]
+            if self.MHC_b_chain_id is None:
+                if class2_beta_best is None:
+                    raise ValueError("Found MHC-II-like hits but none mapped to a beta-chain gene (e.g., DRB1/DPB1/DQB1).")
+                self.MHC_b_chain_id = class2_beta_best[0]
+
+            used.update([self.MHC_a_chain_id, self.MHC_b_chain_id])
+
+        else:
+            # Treat as class I: heavy chain allele indicates HLA-A/B/C/...
+            if self.MHC_a_chain_id is None:
+                if class1_best is None:
+                    debug = ", ".join([f"{cid}(len={len_by_chain[cid]})" for cid in non_tcr_chain_ids])
+                    raise ValueError(
+                        "Could not infer MHC-I heavy chain: no class-I gene hits (A/B/C/E/F/G).\n"
+                        f"Non-TCR chains: {debug}"
+                    )
+                self.MHC_a_chain_id = class1_best[0]
+            used.add(self.MHC_a_chain_id)
+
+            # For class I, MHC_b is typically beta2m (not in IMGT/HLA). Use a structural heuristic:
+            # pick the longest remaining non-TCR chain that is not the heavy chain, but do NOT steal the peptide.
+            if self.MHC_b_chain_id is None:
+                remaining = [cid for cid in non_tcr_chain_ids if cid not in used]
+                # peptide candidates are very short; exclude them first
+                non_pep_like = [cid for cid in remaining if self._count_polymer_residues(self.imgt_all_structure, cid) > 12]
+                if non_pep_like:
+                    # beta2m typically ~90–120 aa; choose best by closeness to 100 then length
+                    self.MHC_b_chain_id = sorted(
+                        non_pep_like,
+                        key=lambda cid: (abs(len_by_chain[cid] - 100), -len_by_chain[cid]),
+                    )[0]
+                    used.add(self.MHC_b_chain_id)
+                else:
+                    self.MHC_b_chain_id = None  # allowed
+
+        # --- Infer peptide from leftover chains (must be <=12 polymer residues) ---
+        if self.Peptide_chain_id is None:
+            leftovers = [cid for cid in non_tcr_chain_ids if cid not in used]
+            if not leftovers:
+                raise ValueError("No leftover chain available to assign as peptide after MHC assignment.")
+
+            # choose shortest by polymer residues
+            leftovers = sorted(leftovers, key=lambda cid: self._count_polymer_residues(self.imgt_all_structure, cid))
+            pep_cid = leftovers[0]
+            pep_len = self._count_polymer_residues(self.imgt_all_structure, pep_cid)
+
+            if pep_len > 12:
+                detail = ", ".join([f"{cid}(poly={self._count_polymer_residues(self.imgt_all_structure, cid)},len={len_by_chain[cid]})"
+                                    for cid in leftovers])
+                raise ValueError(
+                    f"Peptide inference failed: best leftover chain {pep_cid!r} has {pep_len} polymer residues (>12).\n"
+                    f"Leftovers: {detail}"
+                )
+
+            self.Peptide_chain_id = pep_cid
+
+    def _get_MHC_alleles(self):
+        # alpha (heavy or MHC-II alpha)
+        if self._chain_exists(self.imgt_all_structure, self.newMHC_a_chain_id):
+            alpha_seq = self._extract_chain_sequence_from_structure(self.imgt_all_structure, self.newMHC_a_chain_id)
+            self.mhc_alpha_allele = blastp_imgt_hla(alpha_seq, imgt_db_path=IMGT_DB_PATH)
+        else:
+            self.mhc_alpha_allele = None
+
+        # beta (MHC-II beta or beta2m heuristic) — may be missing / may not BLAST-hit
+        if self._chain_exists(self.imgt_all_structure, self.newMHC_b_chain_id):
+            beta_seq = self._extract_chain_sequence_from_structure(self.imgt_all_structure, self.newMHC_b_chain_id)
+            self.mhc_beta_allele = blastp_imgt_hla(beta_seq, imgt_db_path=IMGT_DB_PATH)
+        else:
+            self.mhc_beta_allele = None
 
 
     def rename_pMHC_chains(self):
@@ -93,12 +307,17 @@ class TCRpMHC:
         old_beta_chainid=self.chain_types_dict.get("B","D")
         """Rename MHC and peptide chains to standard IDs."""
         chain_id_map = {
-            self.MHC_a_chain_id: "M",
-            self.MHC_b_chain_id: "N",
-            self.Peptide_chain_id: "P",
             old_alpha_chainid: "A",
-            old_beta_chainid: "B"
+            old_beta_chainid:  "B",
         }
+
+        # Only include pMHC chains if they were provided/inferred
+        if self.MHC_a_chain_id is not None:
+            chain_id_map[self.MHC_a_chain_id] = "M"
+        if self.MHC_b_chain_id is not None:
+            chain_id_map[self.MHC_b_chain_id] = "N"
+        if self.Peptide_chain_id is not None:
+            chain_id_map[self.Peptide_chain_id] = "P"
         first_pass= {}
         second_pass={}
         new_chain_id_map = {}
@@ -133,7 +352,7 @@ class TCRpMHC:
 
         self.imgt_all_structure=structure
         self.newMHC_a_chain_id="M"
-        self.newMHC_b_chain_id="N"
+        self.newMHC_b_chain_id = "N" if self.MHC_b_chain_id is not None else None
         self.newPeptide_chain_id="P"
         self.newTCR_a_chain_id="A"
         self.newTCR_b_chain_id="B"
@@ -167,6 +386,7 @@ class TCRpMHC:
             self.chain_types_dict={}
             self.chain_types_dict["A"]=self.TCR_a_chain_id
             self.chain_types_dict["B"]=self.TCR_b_chain_id
+
         if "A" not in self.chain_types_dict.keys() and "G" not in self.chain_types_dict.keys() and "L" not in self.chain_types_dict.keys() and "K" not in self.chain_types_dict.keys():
             raise ValueError("Could not identify TCR alpha chain in structure.")
         else:
@@ -205,15 +425,37 @@ class TCRpMHC:
         except:
             self.original_CDR_FR_RANGES=None
 
+
         # 3) IMGT-renumber full structure (no chain renaming here)
         self.imgt_all_structure = parser.get_structure("imgt_all", self.input_pdb)
         apply_imgt_renumbering(self.imgt_all_structure, per_chain_map)
+        if self.MHC_a_chain_id is None or self.Peptide_chain_id is None:
+            self._infer_pmhc_chain_ids_if_needed()
         self.rename_pMHC_chains()
+
+        # then allele lookup on standardized chain IDs M/N:
+        self._get_MHC_alleles()
+
+        #check TCRpMHC is complete
+        for check_chain in [self.newMHC_a_chain_id, self.newPeptide_chain_id, self.newTCR_a_chain_id, self.newTCR_b_chain_id]:
+            if not self._chain_exists(self.imgt_all_structure, check_chain):
+                print("error", check_chain)
+                raise RuntimeError("Not all chains are in the input file!")
+            else:
+                print("correct", check_chain)
+
 
         print("IMGT renumbering applied.")
         self.pairs = []
-
+        if len(pairs)==0 and self.TCR_a_chain_id is not None and self.TCR_b_chain_id is not None:
+            print("NO PAIRS FOUND, BUT TCR CHAIN ID OVERRIDE - CREATING SINGLE VIEW")
+            pairs=[{"alpha_chain":self.TCR_a_chain_id,
+                    "beta_chain":self.TCR_b_chain_id,
+                    "alpha_chain_type":"A",
+                    "beta_chain_type":"B"}]
         for idx, pair in enumerate(pairs, start=1):
+            print(pair)
+            print(per_chain_map)
             s = parser.get_structure(f"pair{idx}", self.input_pdb)
             apply_imgt_renumbering(s, per_chain_map)
 
@@ -303,12 +545,13 @@ class TCRpMHC:
                     _cached_traj_view=TrajectoryView(new_traj, {"alpha": new_a, "beta":  new_b }) if self._traj else None,
                 )
             )
-    def calc_geometry(self, out_path):
+
+    def calc_geometry(self, out_path=None):
         print(self.newTCR_a_chain_id)
         print(self.newTCR_b_chain_id)
         df=calc_complex_angles_single_pdb(self,
                                           out_path=out_path,
-                                          vis=True,
+                                          vis=False,
                                           alpha_chain_id=self.newTCR_a_chain_id,
                                           beta_chain_id=self.newTCR_b_chain_id,
                                           mhc_chain_ids=(self.newMHC_a_chain_id, self.newMHC_b_chain_id),

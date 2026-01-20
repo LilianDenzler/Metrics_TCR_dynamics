@@ -33,3 +33,5 @@ __all__ = ["CDR_FR_RANGES", "VARIABLE_RANGE"]
 
 _GEO_DEFAULT_DATA_PATH = files("TCR_TOOLS.geometry.data").joinpath("consensus_output")
 GEO_DATA_PATH: Path = Path(str(_GEO_DEFAULT_DATA_PATH))
+
+IMGT_DB_PATH="/mnt/larry/lilian/DATA/IPD-IMGT-HLA-DATABASE/imgt_hla_prot"

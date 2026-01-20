@@ -1,0 +1,2 @@
+TCR_name,minimization_mode,total_score,tcr_chains,pmhc_chains,peptide_chain,mhc_only_chains,partners_tcr_pmhc,partners_pep_mhc,interface_dG_tcr_pmhc,dG_separated_tcr_pmhc,delta_sasa_tcr_pmhc,interface_dG_pep_mhc,dG_separated_pep_mhc,delta_sasa_pep_mhc,dE_binding_tcr_pmhc,openmm_energy
+Binding_donor4_row0_cand000001,openmm,-124.11118305100288,AB,MP,P,M,MP_AB,M_P,-49.71045786165408,-49.71045786165408,1989.929110389757,-61.272011014550486,-61.272011014550486,1784.3166650499834,-49.71045786176785,-52469.46765080099 kJ/mol

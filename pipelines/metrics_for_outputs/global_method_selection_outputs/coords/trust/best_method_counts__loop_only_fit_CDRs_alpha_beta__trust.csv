@@ -1,0 +1,7 @@
+region_label,coords_kpca_cosine,coords_kpca_poly,coords_diffmap,coords_pca,coords_kpca_rbf
+CDR1α,7,4,4,3,1
+CDR2α,5,6,4,4,0
+CDR3α,5,3,4,4,3
+CDR1β,9,8,1,1,0
+CDR2β,6,4,6,3,0
+CDR3β,3,3,6,6,1

@@ -1,5 +1,7 @@
 import numpy as np
 import mdtraj as md
+import os
+
 
 
 def rmsd_calibration_factor(
@@ -108,3 +110,145 @@ def rmsd_calibration_factor(
         corr = np.nan
 
     return k, corr
+
+
+def _rmsd_fixed_frame_nm(xyz_i_nm: np.ndarray, xyz_j_nm: np.ndarray) -> float:
+    """
+    Fixed-frame RMSD between two frames (NO superposition).
+    xyz_*_nm: (k,3) in nm
+    returns RMSD in nm
+    """
+    diff = xyz_i_nm - xyz_j_nm  # (k,3)
+    return float(np.sqrt(np.mean(np.sum(diff * diff, axis=1))))
+
+
+def rmsd_calibration_factor_all_space(
+    Zg_list: List[np.ndarray],
+    gt_traj_aligned_list,
+    region_names: List[str],
+    atom_names: Set[str] = {"CA"},
+    n_pairs: int = 5000,
+    random_state: int = 0,
+    out_csv: Optional[str] = None,
+    return_center: bool = True,
+) -> Tuple[float, float, Optional[np.ndarray]]:
+    """
+    GLOBAL calibration for a shared embedding space.
+
+    Instead of needing a global frame index mapping, we sample random pairs
+    *within randomly chosen TCRs* and pool (embed_distance, RMSD) pairs.
+
+    Inputs
+    ------
+    Zg_list : list of (n_i, d) arrays
+        GT embeddings per TCR (in the shared reducer space).
+    gt_traj_aligned_list : list of TrajectoryView
+        Aligned GT trajectories (same alignment context as embeddings).
+    region_names : list[str]
+        Assessment region used for RMSD computation.
+    atom_names : set[str]
+        Atoms used for RMSD (default CA).
+    n_pairs : int
+        Total number of random pairs to sample across all TCRs.
+    out_csv : str or None
+        If provided, writes a single-row CSV log with k and corr.
+
+    Returns
+    -------
+    k : float
+        Scale factor so that k*||ΔZ|| ≈ RMSD(Å)
+    corr : float
+        Pearson correlation between ||ΔZ|| and RMSD over sampled pairs
+    center_scaled : (d,) array or None
+        Global center of scaled GT embeddings (for shared centering)
+    """
+    rng = np.random.default_rng(random_state)
+
+    if len(Zg_list) == 0:
+        raise ValueError("Zg_list is empty.")
+    if len(Zg_list) != len(gt_traj_aligned_list):
+        raise ValueError("Zg_list and gt_traj_aligned_list must have same length.")
+
+    dims = [z.shape[1] for z in Zg_list if z is not None and z.size > 0]
+    if len(dims) == 0:
+        raise ValueError("No non-empty embeddings in Zg_list.")
+    d = dims[0]
+    if any(dd != d for dd in dims):
+        raise ValueError("All Zg embeddings must have the same dimension.")
+
+    # Precompute region-only trajectories for RMSD
+    region_trajs = []
+    valid_tcr = []
+    for i, tv in enumerate(gt_traj_aligned_list):
+        z = Zg_list[i]
+        if z is None or z.shape[0] < 2:
+            continue
+        reg = tv.domain_subset(region_names, atom_names)
+        if reg.n_frames < 2:
+            continue
+        # embeddings and reg traj must correspond in frame count (or at least support indexing)
+        # If you subsampled embeddings upstream, you must pass consistent frame selection.
+        if z.shape[0] > reg.n_frames:
+            raise ValueError(
+                f"TCR {i}: embeddings have {z.shape[0]} rows but region traj has {reg.n_frames} frames. "
+                "If you subsampled embeddings, you must apply the same subsample to the trajectory for RMSD calibration."
+            )
+        region_trajs.append(reg)
+        valid_tcr.append(i)
+
+    if len(valid_tcr) == 0:
+        raise ValueError("No valid TCRs (need at least 2 frames) for global RMSD calibration.")
+
+    d_embed = []
+    d_rmsd = []
+
+    # sample pairs across random TCRs (within each chosen TCR)
+    for _ in range(n_pairs):
+        tcr_local = int(rng.integers(0, len(valid_tcr)))
+        i_global = valid_tcr[tcr_local]
+        Z = Zg_list[i_global]
+        reg = region_trajs[tcr_local]
+
+        n = Z.shape[0]
+        a, b = rng.integers(0, n, size=2)
+        if a == b:
+            continue
+        if a > b:
+            a, b = b, a
+
+        de = float(np.linalg.norm(Z[a] - Z[b]))
+        if de <= 1e-8:
+            continue
+
+        # md.rmsd expects trajectories; compare single frames (nm -> Å)
+        dr_nm = md.rmsd(reg[b], reg[a])[0]
+        dr = float(dr_nm * 10.0)
+
+        d_embed.append(de)
+        d_rmsd.append(dr)
+
+    if len(d_embed) < 10:
+        raise ValueError("Too few valid (non-zero) pairs for calibration; increase n_pairs or check embeddings.")
+
+    d_embed = np.asarray(d_embed, float)
+    d_rmsd = np.asarray(d_rmsd, float)
+
+    k = float(np.dot(d_embed, d_rmsd) / np.dot(d_embed, d_embed))
+    corr = float(np.corrcoef(d_embed, d_rmsd)[0, 1]) if d_embed.size > 1 else np.nan
+
+    center_scaled = None
+    if return_center:
+        Z_all = np.concatenate([z for z in Zg_list if z is not None and z.size > 0], axis=0)
+        center_scaled = (Z_all * k).mean(axis=0)
+
+    if out_csv is not None:
+        out_path = Path(out_csv)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        write_header = not out_path.exists()
+        with out_path.open("a", newline="") as f:
+            w = csv.writer(f)
+            if write_header:
+                w.writerow(["region", "atoms", "n_pairs_used", "k_A_per_unit", "corr"])
+            w.writerow(["+".join(region_names), "+".join(sorted(atom_names)), len(d_embed), k, corr])
+
+    return k, corr, center_scaled

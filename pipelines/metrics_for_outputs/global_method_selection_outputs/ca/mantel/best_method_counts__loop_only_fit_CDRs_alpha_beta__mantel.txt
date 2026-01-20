@@ -1,0 +1,8 @@
+best_method   ca_kpca_cosine  ca_pca  ca_diffmap  ca_kpca_rbf  ca_kpca_poly
+region_label                                                               
+CDR1α                     13       3           3            0             0
+CDR2α                     10       7           2            0             0
+CDR3α                      6       6           3            3             1
+CDR1β                     12       2           5            0             0
+CDR2β                      4      14           0            0             1
+CDR3β                     12       5           1            1             0

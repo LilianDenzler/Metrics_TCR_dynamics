@@ -1,0 +1,7 @@
+Binding_donor1_row6_cand000016
+Binding_donor2_row10_cand000033
+Binding_donor2_row14_cand000007
+Binding_donor2_row15_cand000002
+Binding_donor2_row17_cand000010
+Binding_donor2_row21_cand000020
+Binding_donor2_row28_cand000009

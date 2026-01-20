@@ -3,14 +3,20 @@ import argparse, os
 import numpy as np
 import mdtraj as md
 
+
+
+
 from TCR_TOOLS.aligners.aligning import (
-    _keys_for_selection, _atom_indices_from_keys, _tm_per_frame
+    _keys_for_selection,
+    _atom_indices_from_keys,
+    _tm_per_frame,
+    _batched_kabsch_to_single_target,
 )
 from TCR_TOOLS.__init__ import CDR_FR_RANGES, VARIABLE_RANGE
 from TCR_TOOLS.core import io
 
 
-def run(mov, ref, regions=None, atoms=None):
+def run(mov, ref, regions=None, atoms=None, superpose=False):
 
     ref_chains = sorted({getattr(c, "chain_id", str(i)) for i, c in enumerate(ref.topology.chains)})
     if set(ref_chains) >= {"A","B"}:
@@ -38,31 +44,32 @@ def run(mov, ref, regions=None, atoms=None):
     k = len(idx_ref)
     n = mov.n_frames
 
-    # RMSD (Å)
-    # md.rmsd expects both have same atom count for atom_indices/ref_atom_indices; ref has only 1 frame
-    # We just compare each MOV frame to REF frame-0 on the selection
-    try:
-        rmsd_nm = md.rmsd(mov.mdtraj, ref, atom_indices=idx_mov, ref_atom_indices=idx_ref)
-    except:
-        rmsd_nm = md.rmsd(mov, ref, atom_indices=idx_mov, ref_atom_indices=idx_ref)
+    # Coordinates (mdtraj uses nm internally)
+    P = mov.mdtraj.xyz[:, idx_mov, :]          # (n,k,3)
+    Q0 = ref.xyz[0, idx_ref, :]              # (k,3)
+    k = P.shape[1]
 
+    if superpose:
+        # Fit P(t) -> Q0 on the *selected atoms* (batched Kabsch), then compute RMSD/TM from that P_aln
+        R, t = _batched_kabsch_to_single_target(P, Q0)  # R:(n,3,3) t:(n,3)
+        P_use = np.einsum("nij,nkj->nki", R, P) + t[:, None, :]
+    else:
+        # No refit: use P as-is in the current coordinate frame
+        P_use = P
+
+    diff = P_use - Q0[None, :, :]
+    rmsd_nm = np.sqrt(np.mean(np.sum(diff * diff, axis=2), axis=1))  # (n,)
     rmsd_A = rmsd_nm * 10.0
 
-    # TM-score per frame
-    # compute distances between mapped pairs (Å)
-    try:
-        P = mov.mdtraj.xyz[:, idx_mov, :]      # nm
-    except:
-        P = mov.xyz[:, idx_mov, :]
-    Q0 = ref.xyz[0, idx_ref, :]     # nm
-    dist_A = np.linalg.norm(P - Q0, axis=2) * 10.0  # (n, k) Å
-    tm = _tm_per_frame(dist_A, L=k)  # (n,)
-    return n, k, rmsd_A, tm
+    dist_A = np.linalg.norm(diff, axis=2) * 10.0  # (n,k)
+    tm = _tm_per_frame(dist_A, L=k)               # (n,)
+
+    return mov.mdtraj.n_frames, k, rmsd_A, tm
 
 
-def rmsd_tm(mov, ref_pair,regions=None, atoms=None):
+def rmsd_tm(mov, ref_pair,regions=None, atoms=None, superpose=False):
     ref= io.mdtraj_from_biopython_path(ref_pair.full_structure)
-    n, k, rmsd_A, tm=run(mov, ref, regions=regions, atoms=atoms)
+    n, k, rmsd_A, tm=run(mov, ref, regions=regions, atoms=atoms, superpose=superpose)
     print(f"Frames scored: {n}, mapped_pairs: {k}")
     print(f"RMSD_A  mean={np.mean(rmsd_A):.3f}  median={np.median(rmsd_A):.3f}  p95={np.percentile(rmsd_A,95):.3f}  max={np.max(rmsd_A):.3f}")
     print(f"TMscore mean={np.mean(tm):.3f}  median={np.median(tm):.3f}  p95={np.percentile(tm,95):.3f}  min={np.min(tm):.3f}")

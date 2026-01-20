@@ -1,0 +1,26 @@
+#code for building HLA Database.
+#Needed for blast search, to identify HLA code of a given pMHC.
+
+HLA alleles were assigned by BLASTP alignment against the IPD--IMGT/HLA protein database.
+Protein sequences were downloaded from the EMBL--EBI FTP server
+(\url{https://ftp.ebi.ac.uk/pub/databases/ipd/imgt/hla/fasta/hla_prot.fasta})
+and formatted as a local BLAST database using \texttt{makeblastdb}.
+Alleles were determined by selecting the top-scoring hit based on sequence
+identity and alignment coverage.
+
+
+
+conda install -c bioconda blast
+
+
+#download IPD-IMGT/HLA database
+wget https://ftp.ebi.ac.uk/pub/databases/ipd/imgt/hla/fasta/hla_prot.fasta
+
+makeblastdb \
+  -in hla_prot.fasta \
+  -dbtype prot \
+  -parse_seqids \
+  -out imgt_hla_prot
+
+
+

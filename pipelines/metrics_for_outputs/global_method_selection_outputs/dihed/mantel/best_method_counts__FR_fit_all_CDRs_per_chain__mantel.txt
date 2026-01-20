@@ -1,0 +1,4 @@
+best_method      dihed_diffmap  dihed_kpca_cosine  dihed_pca  dihed_kpca_rbf  dihed_kpca_poly
+region_label                                                                                 
+FR-fitted CDR3α              9                  5          2               1                2
+FR-fitted CDR3β              2                  6          7               3                1

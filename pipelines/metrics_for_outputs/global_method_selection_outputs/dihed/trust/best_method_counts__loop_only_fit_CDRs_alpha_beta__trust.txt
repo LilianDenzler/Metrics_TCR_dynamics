@@ -1,0 +1,8 @@
+best_method   dihed_kpca_cosine  dihed_diffmap  dihed_kpca_poly  dihed_kpca_rbf  dihed_pca
+region_label                                                                              
+CDR1α                         9              2                3               5          0
+CDR2α                         8              6                3               2          0
+CDR3α                        10              3                3               3          0
+CDR1β                         8              9                1               1          0
+CDR2β                         7              3                5               4          0
+CDR3β                         9              3                3               3          1

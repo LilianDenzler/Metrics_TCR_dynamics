@@ -204,7 +204,7 @@ def save_MD_frames_closest_to_each_model_point_with_metrics(
         mov = md.load(model_pdb_path, top=model_pdb_path)
         ref = md.load(gt_pdb_path, top=gt_pdb_path)
 
-        n, k, rmsd_A, tm = run_rmsd_tm(mov, ref, regions=region_names, atoms=atom_names)
+        n, k, rmsd_A, tm = run_rmsd_tm(mov, ref, regions=region_names, atoms=atom_names, rmsd_superpose=False)
 
         if hasattr(rmsd_A, "__len__"):
             rmsd_val = float(rmsd_A[0])

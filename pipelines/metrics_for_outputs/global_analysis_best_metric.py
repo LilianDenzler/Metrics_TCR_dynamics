@@ -15,14 +15,14 @@ import pandas as pd
 from TCR_TOOLS.classes.tcr import TCR
 from TCR_TOOLS.scoring.rmsd_tm import rmsd_tm
 from TCR_Metrics.pipelines.metrics_for_outputs.run_test import  assess_screening, calc_best_metric
-
+from pathlib import Path
 def align_to_self(gttcr_pair, region_names, atom_names, outdir):
     gt_traj_aligned, rmsd=gttcr_pair.traj.align_to_ref(gttcr_pair,
                         region_names=region_names,
                         atom_names=atom_names,
                         inplace=False)
 
-    (n, k, rmsd_A, tm)=rmsd_tm(gt_traj_aligned, gttcr_pair, regions=region_names, atoms={"CA"})
+    (n, k, rmsd_A, tm)=rmsd_tm(gt_traj_aligned, gttcr_pair, regions=region_names, atoms={"CA"},superpose=False)
     print(f"RMSD: {rmsd_A}, TM: {tm}")
     #write a txt file with the RMSD and TM
     with open(os.path.join(outdir,"rmsd_tm.txt"), "w") as f:
@@ -39,6 +39,7 @@ def run_one_TCR(pdb_gt, xtc_gt, output_dir):
         min_contacts=50,
         legacy_anarci=True
     )
+    print(gttcr)
     gttcr_pair=gttcr.pairs[0]
 
     #alignment of each CDR seperatly and assessment
@@ -48,14 +49,14 @@ def run_one_TCR(pdb_gt, xtc_gt, output_dir):
         assess_screening(gt_traj_aligned, None, regions=[region],outdir_base=f"{output_dir}/{region}")
 
     #alignment of the framework region:
-    for aligned_variable_domain in ["A_variable","B_variable"]:
+    for aligned_variable_domain, fr_align_list in [("A_variable", ["A_FR1","A_FR2","A_FR3"]), ("B_variable", ["B_FR1","B_FR2","B_FR3"])]:
         name_domain=aligned_variable_domain
         os.makedirs(f"{output_dir}/{name_domain}", exist_ok=True)
-        gt_traj_aligned=align_to_self(gttcr_pair, [region], atom_names={"CA","C","N"}, outdir=f"{output_dir}/{name_domain}")
+        gt_traj_aligned=align_to_self(gttcr_pair, fr_align_list, atom_names={"CA","C","N"}, outdir=f"{output_dir}/{name_domain}")
         rmsd_tm_df=pd.DataFrame(columns=["Region","RMSD","TM"])
         rows=[]
         for region in ["A_CDR1","A_CDR2","A_CDR3","B_CDR1","B_CDR2","B_CDR3", aligned_variable_domain]:
-            n, k, rmsd_A, tm = rmsd_tm(gt_traj_aligned, gttcr_pair, regions=[region], atoms={"CA"})
+            n, k, rmsd_A, tm = rmsd_tm(gt_traj_aligned, gttcr_pair, regions=[region], atoms={"CA"}, superpose=False)
             rows.append({"Region": f"{region}gt_to_gt", "RMSD": float(np.mean(rmsd_A)), "TM": float(np.mean(tm))})
             os.makedirs(f"{output_dir}/{name_domain}/{region}", exist_ok=True)
             assess_screening( gt_traj_aligned, None, regions=[region], outdir_base=f"{output_dir}/{name_domain}/{region}")
@@ -87,15 +88,19 @@ def evaluate_all_outs(output_dir_all):
 
 
 if __name__ == "__main__":
-    output_dir_all="/workspaces/Graphormer/TCR_Metrics/outputs/global_best_metric_analysis_out"
+    output_dir_all="/workspaces/Graphormer/TCR_Metrics/outputs/global_best_metric_analysis_out_noadditionalfitting"
     os.makedirs(output_dir_all,exist_ok=True)
-    for folder in os.listdir("/mnt/larry/lilian/DATA/VANILLA_DIG_OUTPUTS/CORY_PDBS/output_vanilla_dig3"):
+    for folder in os.listdir("/mnt/larry/lilian/DATA/Cory_data"):
         TCR_NAME=folder
         print(f"Processing TCR: {TCR_NAME}")
         TCR_output_folder=os.path.join(output_dir_all,TCR_NAME)
-        os.makedirs(TCR_output_folder,exist_ok=True)
-        run_one_TCR(
-            pdb_gt=f"/mnt/larry/lilian/DATA/Cory_data/{TCR_NAME}/{TCR_NAME}.pdb",
-            xtc_gt=f"/mnt/larry/lilian/DATA/Cory_data/{TCR_NAME}/{TCR_NAME}_Prod.xtc",
-            output_dir=TCR_output_folder
-        )
+        if Path(TCR_output_folder).exists():
+            print(f"skip {TCR_NAME}")
+            continue
+        if Path(f"/mnt/larry/lilian/DATA/Cory_data/{TCR_NAME}/{TCR_NAME}.pdb").exists() and Path(f"/mnt/larry/lilian/DATA/Cory_data/{TCR_NAME}/{TCR_NAME}_Prod.xtc").exists():
+            os.makedirs(TCR_output_folder,exist_ok=True)
+            run_one_TCR(
+                pdb_gt=f"/mnt/larry/lilian/DATA/Cory_data/{TCR_NAME}/{TCR_NAME}.pdb",
+                xtc_gt=f"/mnt/larry/lilian/DATA/Cory_data/{TCR_NAME}/{TCR_NAME}_Prod.xtc",
+                output_dir=TCR_output_folder
+            )
