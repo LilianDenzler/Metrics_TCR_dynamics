@@ -1,0 +1,37 @@
+A_CDR1:
+  A_CDR1: coords_kpca_cosine
+  A_variable: coords_kpca_cosine
+  B_variable: coords_kpca_cosine
+A_CDR1A_CDR2A_CDR3:
+  A_variable: coords_kpca_cosine
+  B_variable: coords_kpca_cosine
+A_CDR1A_CDR2A_CDR3B_CDR1B_CDR2B_CDR3:
+  A_variable: coords_kpca_cosine
+  B_variable: coords_kpca_cosine
+A_CDR2:
+  A_CDR2: coords_kpca_cosine
+  A_variable: coords_kpca_cosine
+  B_variable: coords_kpca_cosine
+A_CDR3:
+  A_CDR3: coords_kpca_cosine
+  A_variable: coords_kpca_cosine
+  B_variable: coords_kpca_cosine
+A_variable:
+  A_variable: coords_kpca_cosine
+B_CDR1:
+  A_variable: coords_kpca_cosine
+  B_CDR1: coords_kpca_cosine
+  B_variable: coords_kpca_cosine
+B_CDR1B_CDR2B_CDR3:
+  A_variable: coords_kpca_cosine
+  B_variable: coords_kpca_cosine
+B_CDR2:
+  A_variable: coords_kpca_cosine
+  B_CDR2: coords_kpca_cosine
+  B_variable: coords_kpca_cosine
+B_CDR3:
+  A_variable: coords_kpca_cosine
+  B_CDR3: coords_kpca_cosine
+  B_variable: coords_kpca_cosine
+B_variable:
+  B_variable: coords_kpca_cosine

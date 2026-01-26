@@ -27,7 +27,7 @@ BASE_OUT_ROOT = "/mnt/dave/lilian/DIG_VARIATION_OUTPUTS/benchmarks"
 
 CONFIG_MODES = [
     ("config_assess_modes_all_ca_pca.yaml", "all_ca_pca"),
-    ("config_assess_modes_all_ca_kpca_cosine.yaml", "all_ca_kpca_cosine"),
+    ("config_assess_modes_all_coords_kpca_cosine.yaml", "all_coords_kpca_cosine"),
     ("config_assess_modes.yaml", "default"),
 ]
 
@@ -127,21 +127,21 @@ if __name__ == "__main__":
 
     FIT_ON = "concat"
     MODEL_FOLDER = "/mnt/larry/lilian/DATA/VANILLA_DIG_OUTPUTS/CORY_PDBS/benchmarked_models/"
-    MD_FOLDER = "/mnt/larry/lilian/DATA/Oriol_adaptive_sampling/"
-    BASE_OUT_ROOT = "/mnt/dave/lilian/DIG_VARIATION_OUTPUTS/benchmarks"
+    MD_FOLDER = "/mnt/larry/lilian/DATA/CORY_ORIOL_MERGED_MD"
+    BASE_OUT_ROOT = "/mnt/dave/lilian/DIG_VARIATION_OUTPUTS/benchmarks_new_combined_oriolcory"
 
     CONFIG_MODES = [
-        ("config_assess_modes_all_ca_pca.yaml", "all_ca_pca"),
-        ("config_assess_modes_all_ca_kpca_cosine.yaml", "all_ca_kpca_cosine"),
-        ("config_assess_modes.yaml", "default"),
+        ("config_assess_modes_all_coords_kpca_cosine.yaml", "all_coords_kpca_cosine")
     ]
 
     MODEL_NAMES = [
         "adaptive_sampling_all",
         "baseline_adaptivesampling_200_frames_1",
+        "baseline_sampled_200_frames_1",
         "Alphaflow_with_linker",
         "Dig_vanilla",
-        "baseline_sampled_200_frames_1",
+        "bioemu_no_filter",
+        "framedipt"
 
     ]
 
